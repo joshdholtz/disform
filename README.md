@@ -2,18 +2,45 @@
 
 [![CI](https://github.com/joshdholtz/disform/actions/workflows/ci.yml/badge.svg)](https://github.com/joshdholtz/disform/actions/workflows/ci.yml)
 
-Declarative Discord server management. Define your server's channels, categories, roles, and permissions in a YAML file — then `plan` to preview changes and `apply` to make them real.
+**Declarative Discord server management. Like Terraform, but for Discord.**
 
-Think Terraform, but for Discord.
+disform reads a YAML config file, compares it against your live server state, and applies only the changes needed — channels, categories, roles, permissions, and guild settings. A state file tracks what disform manages so it never touches resources it didn't create.
 
 ```
-  + role "moderator" will be created
-  ~ channel "General/announcements" will be updated
-    topic: "Old topic" -> "Server announcements"
-  - channel "Voice/afk" will be deleted
+$ disform plan
+
+  ~ update role admin
+      color: "#aaaaaa" → "#E74C3C"
+
+  + create channel General/announcements
+
+  - delete channel General/old-chat
 
 Plan: 1 to add, 1 to change, 1 to destroy.
 ```
+
+---
+
+## Table of Contents
+
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [How It Works](#how-it-works)
+- [Commands](#commands)
+- [Config Reference](#config-reference)
+  - [settings](#settings)
+  - [roles](#roles)
+  - [categories](#categories)
+  - [channels](#channels)
+  - [Stable keys vs display names](#stable-keys-vs-display-names)
+  - [Permission overwrites](#permission-overwrites)
+- [Permissions](#permissions)
+- [Channel Types](#channel-types)
+- [State File](#state-file)
+- [Environment & Auth](#environment--auth)
+- [CI/CD Integration](#cicd-integration)
+- [Bot Setup](#bot-setup)
+- [Contributing](#contributing)
 
 ---
 
@@ -25,30 +52,76 @@ Plan: 1 to add, 1 to change, 1 to destroy.
 go install github.com/joshdholtz/disform@latest
 ```
 
-Or download a binary from [Releases](https://github.com/joshdholtz/disform/releases).
+Or build from source:
+
+```sh
+git clone https://github.com/joshdholtz/disform
+cd disform
+go build -o disform .
+```
+
+Verify:
+
+```sh
+disform version
+```
 
 ---
 
-## Quick start
+## Quick Start
 
-**1. Create a Discord bot and get a token**
+**1. Get a bot token**
 
-Go to the [Discord Developer Portal](https://discord.com/developers/applications), create an application, add a bot, and copy the token. The bot needs **Manage Channels** and **Manage Roles** permissions on your server.
+Create a bot at [discord.com/developers](https://discord.com/developers/applications), invite it to your server with `Manage Roles` and `Manage Channels` permissions, and copy the token. See [Bot Setup](#bot-setup) for the full walkthrough.
 
-**2. Set your token**
+**2. Create a `.env` file** (or export the variable directly)
 
 ```sh
-export DISCORD_TOKEN=your_bot_token_here
+echo "DISCORD_TOKEN=your-token-here" > .env
 ```
 
-**3. Import an existing server** (or write a config from scratch)
+**3. Import your existing server**
 
 ```sh
 disform import --server-id YOUR_SERVER_ID
-# Writes disform.yml and disform.state.json
 ```
 
-**4. Edit `disform.yml`** to declare the desired state of your server.
+This creates `disform.yml` (your config) and `disform.state.json` (the state file).
+
+**4. Edit `disform.yml`**
+
+```yaml
+server_id: "123456789012345678"
+
+roles:
+  admin:
+    color: "#E74C3C"
+    hoist: true
+    mentionable: true
+    permissions: [administrator]
+
+  moderator:
+    color: "#3498DB"
+    hoist: true
+    permissions: [kick_members, manage_messages]
+
+categories:
+  general:
+    name: "General"
+    position: 0
+    channels:
+      welcome:
+        type: text
+        topic: "Welcome to the server!"
+        permissions:
+          "@everyone":
+            deny: [send_messages]
+          moderator:
+            allow: [send_messages]
+      chat:
+        name: "general-chat"
+        type: text
+```
 
 **5. Preview changes**
 
@@ -64,172 +137,67 @@ disform apply
 
 ---
 
-## Configuration
+## How It Works
 
-All server structure lives in `disform.yml`.
+disform uses a three-way diff at plan time:
 
-```yaml
-server_id: "123456789012345678"
-
-roles:
-  admin:
-    color: "#E74C3C"
-    hoist: true
-    mentionable: true
-    permissions:
-      - administrator
-
-  moderator:
-    color: "#E67E22"
-    hoist: true
-    permissions:
-      - kick_members
-      - manage_messages
-      - manage_channels
-
-  member:
-    color: "#2ECC71"
-
-categories:
-  General:
-    position: 0
-    channels:
-      welcome:
-        type: text
-        topic: "Read the rules before chatting."
-        permissions:
-          "@everyone":
-            allow:
-              - view_channel
-              - read_message_history
-            deny:
-              - send_messages
-
-      general-chat:
-        type: text
-        topic: "Talk about anything."
-
-      announcements:
-        type: announcement
-        permissions:
-          "@everyone":
-            deny:
-              - send_messages
-
-  Voice:
-    position: 1
-    channels:
-      general-voice:
-        type: voice
-        bitrate: 64000
-        user_limit: 0
-
-      music:
-        type: voice
-        bitrate: 128000
-        user_limit: 10
+```
+disform.yml        ──┐
+                     ├──► planner ──► []Action ──► applier ──► Discord API
+disform.state.json ──┤                  ▲
+                     └── live Discord ──┘ (fetched fresh each run)
 ```
 
-### Roles
+**Desired state** (`disform.yml`) — what you want.  
+**Tracked state** (`disform.state.json`) — what disform manages.  
+**Live state** (Discord API) — what actually exists right now.
 
-| Field | Type | Description |
-|---|---|---|
-| `color` | string | Hex color, e.g. `"#FF0000"` |
-| `hoist` | bool | Show members separately in the sidebar |
-| `mentionable` | bool | Allow anyone to @mention this role |
-| `permissions` | list | Guild-level permissions (see [Permission names](#permission-names)) |
+The planner compares all three:
 
-### Categories
+| In config | In state | In Discord | Action |
+|-----------|----------|------------|--------|
+| ✓ | ✓ | ✓ | Compare fields → PATCH if changed |
+| ✓ | ✓ | ✗ | Drift detected → re-create |
+| ✓ | ✗ | — | Create |
+| ✗ | ✓ | — | Delete |
+| ✗ | ✗ | ✓ | Ignore (external resource) |
 
-| Field | Type | Description |
-|---|---|---|
-| `position` | int | Sort order in the channel list |
-| `channels` | map | Channels nested under this category |
+Resources not in the state file are never touched. disform coexists safely with channels or roles managed by hand or by other bots.
 
-### Channels
+### Apply ordering
 
-| Field | Type | Description |
-|---|---|---|
-| `type` | string | `text`, `voice`, `announcement`, `forum`, `stage` |
-| `topic` | string | Channel topic / description |
-| `nsfw` | bool | Mark as age-restricted |
-| `slowmode` | int | Seconds between messages (0 = off) |
-| `bitrate` | int | Voice bitrate in bps (voice channels only) |
-| `user_limit` | int | Max users in voice channel (0 = unlimited) |
-| `permissions` | map | Per-role permission overwrites |
+Creates and updates run in dependency order:
 
-### Permission overwrites
+1. Roles (no dependencies)
+2. Categories (no dependencies)
+3. Channels (depend on categories for `parent_id`)
+4. Guild settings
 
-Each key under `permissions` is either a role name defined in `roles:` or `"@everyone"`. Each entry has an `allow` list and a `deny` list.
+Deletes run in reverse order so children are removed before parents.
 
-```yaml
-permissions:
-  "@everyone":
-    deny:
-      - send_messages
-  moderator:
-    allow:
-      - send_messages
-      - manage_messages
-```
+### Partial failure recovery
 
-### Permission names
-
-<details>
-<summary>Full list of supported permission names</summary>
-
-| Name | Description |
-|---|---|
-| `administrator` | All permissions, bypasses overwrites |
-| `manage_channels` | Create, edit, delete channels |
-| `manage_guild` | Edit server settings |
-| `manage_roles` | Create and manage roles |
-| `manage_messages` | Delete and pin messages |
-| `manage_webhooks` | Create and manage webhooks |
-| `manage_emojis` | Add and remove emojis |
-| `manage_threads` | Archive and delete threads |
-| `manage_nicknames` | Change other members' nicknames |
-| `kick_members` | Remove members from server |
-| `ban_members` | Ban members from server |
-| `moderate_members` | Timeout members |
-| `view_channel` | See channels |
-| `send_messages` | Send messages in text channels |
-| `send_messages_in_threads` | Reply in threads |
-| `send_tts_messages` | Send text-to-speech messages |
-| `create_public_threads` | Create public threads |
-| `create_private_threads` | Create private threads |
-| `embed_links` | Links show as embeds |
-| `attach_files` | Upload files |
-| `add_reactions` | Add emoji reactions |
-| `use_external_emojis` | Use emojis from other servers |
-| `use_external_stickers` | Use stickers from other servers |
-| `use_slash_commands` | Use application commands |
-| `use_embedded_activities` | Use Activities in voice channels |
-| `use_vad` | Use voice activity detection |
-| `mention_everyone` | @everyone and @here |
-| `read_message_history` | Read past messages |
-| `view_audit_log` | View the audit log |
-| `view_guild_insights` | View server insights |
-| `priority_speaker` | Reduce others' volume when speaking |
-| `stream` | Go live in voice channels |
-| `connect` | Join voice channels |
-| `speak` | Talk in voice channels |
-| `mute_members` | Mute others in voice |
-| `deafen_members` | Deafen others in voice |
-| `move_members` | Move members between voice channels |
-| `request_to_speak` | Request to speak in Stage channels |
-| `change_nickname` | Change your own nickname |
-| `create_instant_invite` | Create invite links |
-
-</details>
+State is written after every successful action. If apply fails mid-run, re-run `disform apply` — already-applied resources are detected as up-to-date and skipped.
 
 ---
 
 ## Commands
 
+### Global flags
+
+All commands accept:
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--config` | `-c` | `disform.yml` | Config file path |
+| `--state` | `-s` | `disform.state.json` | State file path |
+| `--token` | `-t` | `$DISCORD_TOKEN` | Discord bot token |
+
+---
+
 ### `disform init`
 
-Writes a starter `disform.yml` template.
+Create a starter `disform.yml` in the current directory.
 
 ```sh
 disform init
@@ -237,72 +205,127 @@ disform init --server-id 123456789012345678
 disform init --force   # overwrite existing file
 ```
 
+---
+
+### `disform import`
+
+Fetch live server state and generate `disform.yml` + `disform.state.json`. Use this to bring an existing server under disform management.
+
+```sh
+disform import --server-id 123456789012345678
+disform import --server-id 123456789012345678 --output staging.yml
+```
+
+---
+
 ### `disform plan`
 
-Fetches the live Discord state and shows what would change. Does not modify anything.
+Show what changes would be made. Reads live Discord state but makes no modifications.
 
 ```sh
 disform plan
-disform plan --json                  # machine-readable output for scripting
-disform plan --detailed-exitcode     # exit 2 when changes exist (CI gate)
+disform plan --json                  # machine-readable JSON for scripting
+disform plan --detailed-exitcode     # exit 2 if changes exist (CI gate)
 ```
+
+---
 
 ### `disform apply`
 
-Runs `plan`, prompts for confirmation, then executes all changes. Acquires a lock on the state file to prevent concurrent runs. State is saved after each successful action so a partial failure is recoverable.
+Compute a plan, prompt for confirmation, then execute all changes. Acquires a lock on the state file to prevent concurrent runs.
 
 ```sh
 disform apply
-disform apply --auto-approve                    # skip confirmation
-disform apply --target role.admin               # apply only one resource
-disform apply --target channel.General/welcome  # channel targets use Category/name
+disform apply --auto-approve
+
+# Apply only specific resources:
+disform apply --target role.admin
+disform apply --target category.general
+disform apply --target channel.general/welcome
 ```
+
+`--target` can be repeated. Format: `role.<key>`, `category.<key>`, `channel.<categoryKey/channelKey>`.
+
+---
 
 ### `disform destroy`
 
-Deletes every resource tracked in the state file. Prompts for confirmation. Clears the state file on success. Channels are always deleted before their parent categories.
+Delete every resource tracked in the state file, then clear it. Prompts for confirmation.
 
 ```sh
 disform destroy
 disform destroy --auto-approve
 ```
 
-### `disform import`
-
-Reads the current Discord server state and generates both a `disform.yml` config and a `disform.state.json` state file. Use this to bring an existing server under disform management.
-
-```sh
-disform import --server-id 123456789012345678
-disform import --server-id 123456789012345678 --output my-server.yml
-```
+---
 
 ### `disform validate`
 
-Checks the config file for errors without connecting to Discord.
+Check the config file for errors without connecting to Discord.
 
 ```sh
 disform validate
 disform validate --config staging.yml
 ```
 
+---
+
 ### `disform drift`
 
-Compares the state file against live Discord and reports resources that were renamed or deleted outside of disform.
+Compare the state file against live Discord and report resources that were renamed or deleted outside of disform.
 
 ```sh
 disform drift
 ```
 
-### `disform fmt`
+---
 
-Normalizes `disform.yml` in place — sorts keys alphabetically, uppercases hex colors.
+### `disform refresh`
+
+Re-sync the state file to live Discord by name-matching. Useful when a resource was deleted and recreated outside disform (new Discord ID, same name).
 
 ```sh
-disform fmt
-disform fmt --check   # exit 1 if file would change (useful in CI)
+disform refresh
 ```
 
+---
+
+### `disform show`
+
+Pretty-print the current live server state — settings, roles by hierarchy, categories, and channels.
+
+```sh
+disform show
+disform show --server-id 123456789012345678
+```
+
+---
+
+### `disform fmt`
+
+Normalize `disform.yml` in place: sorts keys alphabetically, uppercases hex colors.
+
+```sh
+disform fmt           # write in place
+disform fmt --check   # exit 1 if file would change
+```
+
+---
+
+### `disform context`
+
+Print LLM-ready documentation about the config format and CLI — paste into Claude, ChatGPT, or any assistant to give it full context about disform.
+
+```sh
+disform context
+disform context | pbcopy   # copy to clipboard (macOS)
+```
+
+---
+
 ### `disform version`
+
+Print version, commit hash, and build date.
 
 ```sh
 disform version
@@ -310,21 +333,243 @@ disform version
 
 ---
 
-## Global flags
+## Config Reference
 
-All commands accept these flags:
+```yaml
+server_id: "123456789012345678"   # required
 
-| Flag | Default | Description |
-|---|---|---|
-| `--config`, `-c` | `disform.yml` | Path to the config file |
-| `--state`, `-s` | `disform.state.json` | Path to the state file |
-| `--token`, `-t` | `$DISCORD_TOKEN` | Discord bot token |
+settings: ...    # optional — guild-level settings
+roles: ...       # optional — role definitions
+categories: ...  # optional — categories and their channels
+channels: ...    # optional — top-level channels (no parent category)
+```
 
 ---
 
-## State file
+### `settings`
 
-disform tracks what it manages in `disform.state.json`. This file maps logical names in your config to Discord's internal IDs. Commit it alongside `disform.yml`.
+Guild-level settings. Omit the section entirely to leave these unmanaged.
+
+```yaml
+settings:
+  verification_level: none              # none | low | medium | high | very_high
+  explicit_content_filter: disabled     # disabled | members_without_roles | all_members
+  default_message_notifications: all_messages  # all_messages | only_mentions
+  afk_timeout: 300                      # 0 | 60 | 300 | 900 | 1800 | 3600 (seconds)
+  afk_channel: voice-afk               # display name of an existing voice channel
+  system_channel: arrivals             # display name of an existing text channel
+```
+
+---
+
+### `roles`
+
+Map of roles. Keys are stable internal identifiers used in the state file. The optional `name` field is the Discord display name members see.
+
+```yaml
+roles:
+  "@everyone":                    # base server permissions; cannot be created or deleted
+    permissions: [view_channel, send_messages]
+
+  admin:                          # stable key — never change this
+    name: "Admin"                 # Discord display name (defaults to key if omitted)
+    color: "#E74C3C"             # hex, "#RRGGBB"
+    hoist: true                  # show separately in member list
+    mentionable: true            # allow @role mentions
+    permissions:
+      - administrator
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | *(key)* | Discord display name |
+| `color` | string | none | Hex color `"#RRGGBB"` |
+| `hoist` | bool | false | Show separately in member list |
+| `mentionable` | bool | false | Allow @role mentions |
+| `permissions` | []string | [] | Guild-level permission names |
+
+---
+
+### `categories`
+
+Map of categories. Each category contains its channels.
+
+```yaml
+categories:
+  general:                        # stable key
+    name: "General"              # Discord display name (defaults to key if omitted)
+    position: 0                  # sort order in channel list
+    channels:
+      welcome:                   # stable key
+        name: "welcome"
+        type: text
+        topic: "Welcome!"
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Discord display name (defaults to key) |
+| `position` | int | Sort order (lower = higher in list) |
+| `channels` | map | Channels nested under this category |
+
+---
+
+### `channels`
+
+Top-level channels not inside a category. Same fields as category channels.
+
+```yaml
+channels:
+  rules:
+    type: text
+    topic: "Read before posting"
+```
+
+**All channel fields:**
+
+```yaml
+some-channel:
+  name: "display name"      # optional; key used if omitted
+  type: text                # see Channel Types
+  topic: "description"      # text/announcement/forum channels
+  nsfw: false
+  slowmode: 30              # seconds between messages (0 = off)
+  bitrate: 64000            # voice channels only, bits per second
+  user_limit: 10            # voice channels only, 0 = unlimited
+  permissions:
+    "@everyone":
+      allow: [view_channel]
+      deny: [send_messages]
+    moderator:
+      allow: [send_messages, manage_messages]
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | *(key)* | Discord display name |
+| `type` | string | required | Channel type (see below) |
+| `topic` | string | "" | Channel description |
+| `nsfw` | bool | false | Age-restricted |
+| `slowmode` | int | 0 | Seconds between messages |
+| `bitrate` | int | 0 | Voice bitrate in bps |
+| `user_limit` | int | 0 | Max voice users (0 = unlimited) |
+| `permissions` | map | {} | Per-role permission overwrites |
+
+---
+
+### Stable keys vs display names
+
+The map key for any role, category, or channel is a **stable internal handle**. It is stored in the state file and used to track the resource — including across renames.
+
+The optional `name:` field is the **Discord display name** your members see.
+
+```yaml
+categories:
+  general:              # ← stable key: do not change this
+    name: "General"     # ← display name: change freely, no history lost
+    channels:
+      welcome:
+        name: "welcome"
+```
+
+Changing `name:` issues a `PATCH` to Discord with the new display name — no channel history is lost.  
+Changing the YAML key would look like a delete + create to disform, destroying channel history.
+
+---
+
+### Permission overwrites
+
+Each key under `permissions` is a role key defined in `roles:` or the special `"@everyone"`.
+
+```yaml
+permissions:
+  "@everyone":
+    deny: [send_messages]
+  moderator:
+    allow: [send_messages, manage_messages]
+  admin:
+    allow: [administrator]
+```
+
+For new channels, overwrites are sent in the creation request. For existing channels, they are synced via the Discord channel permissions API.
+
+---
+
+## Permissions
+
+Use these names anywhere a permission list is expected.
+
+### General
+
+| Name | Description |
+|------|-------------|
+| `administrator` | All permissions; bypasses channel overwrites |
+| `view_channel` | See channels and read messages |
+| `manage_channels` | Create, edit, delete channels |
+| `manage_guild` | Edit server settings |
+| `manage_roles` | Create and manage roles |
+| `manage_webhooks` | Create and manage webhooks |
+| `manage_nicknames` | Change other members' nicknames |
+| `change_nickname` | Change your own nickname |
+| `kick_members` | Remove members from the server |
+| `ban_members` | Ban members from the server |
+| `moderate_members` | Timeout members |
+| `view_audit_log` | View the audit log |
+| `view_guild_insights` | View server insights |
+| `create_instant_invite` | Create invite links |
+
+### Text channels
+
+| Name | Description |
+|------|-------------|
+| `send_messages` | Send messages |
+| `send_messages_in_threads` | Reply in threads |
+| `send_tts_messages` | Send text-to-speech messages |
+| `read_message_history` | Read past messages |
+| `manage_messages` | Delete and pin messages |
+| `manage_threads` | Archive and delete threads |
+| `create_public_threads` | Start public threads |
+| `create_private_threads` | Start private threads |
+| `embed_links` | Links show as rich embeds |
+| `attach_files` | Upload files and media |
+| `add_reactions` | Add emoji reactions |
+| `use_external_emojis` | Use emojis from other servers |
+| `use_external_stickers` | Use stickers from other servers |
+| `use_slash_commands` | Use application commands |
+| `mention_everyone` | Use @everyone and @here |
+
+### Voice channels
+
+| Name | Description |
+|------|-------------|
+| `connect` | Join voice channels |
+| `speak` | Talk in voice channels |
+| `stream` | Go live / screenshare |
+| `use_vad` | Use voice activity detection |
+| `use_embedded_activities` | Use Activities (games) in voice |
+| `priority_speaker` | Reduce others' volume when speaking |
+| `mute_members` | Server-mute other members |
+| `deafen_members` | Server-deafen other members |
+| `move_members` | Move members between voice channels |
+| `request_to_speak` | Request to speak in Stage channels |
+
+---
+
+## Channel Types
+
+| Config value | Discord type | Description |
+|---|---|---|
+| `text` | 0 | Standard text channel |
+| `voice` | 2 | Voice / video channel |
+| `announcement` | 5 | Announcement channel (formerly News) |
+| `stage` | 13 | Stage channel for audio broadcasts |
+| `forum` | 15 | Forum-style threaded channel |
+
+---
+
+## State File
+
+`disform.state.json` maps config keys to Discord IDs. It is managed automatically — do not edit it by hand. Commit it alongside `disform.yml`.
 
 ```json
 {
@@ -334,32 +579,136 @@ disform tracks what it manages in `disform.state.json`. This file maps logical n
     "admin": { "discord_id": "987654321098765432" }
   },
   "categories": {
-    "General": { "discord_id": "111111111111111111" }
+    "general": { "discord_id": "111111111111111111" }
   },
   "channels": {
-    "General/welcome": { "discord_id": "222222222222222222" }
+    "general/welcome": { "discord_id": "333333333333333333" },
+    "/rules": { "discord_id": "444444444444444444" }
   }
 }
 ```
 
-The state file is how disform:
-- **Renames** resources correctly (rename in config → update in Discord, not delete+recreate)
-- **Detects drift** — if a resource is deleted outside of disform, the next `apply` re-creates it
-- **Deletes cleanly** — resources removed from config are deleted from Discord
+**Channel key format:**
+- `"CategoryKey/channelKey"` — channel inside a category
+- `"/channelKey"` — top-level channel (empty category prefix)
+
+The state file enables disform to:
+- **Rename without recreating** — same key means same resource, even if the display name changed
+- **Detect drift** — resource in state but gone from Discord → re-create on next apply
+- **Clean up properly** — resource removed from config → delete from Discord
 
 ---
 
-## Bot setup
+## Environment & Auth
+
+### Token priority (highest to lowest)
+
+1. `--token` CLI flag
+2. `DISCORD_TOKEN` environment variable
+3. `DISCORD_TOKEN` in `.env` file in the current directory
+
+### `.env` file
+
+disform auto-loads a `.env` file on startup. No third-party library — plain `KEY=VALUE` parsing:
+
+```sh
+# .env
+DISCORD_TOKEN=your-bot-token-here
+```
+
+Supports `export KEY=VALUE`, single- or double-quoted values, and `#` comments. Variables already present in the shell environment take precedence.
+
+### `NO_COLOR`
+
+Set `NO_COLOR` to any value to disable ANSI color output:
+
+```sh
+NO_COLOR=1 disform plan
+```
+
+---
+
+## CI/CD Integration
+
+### Apply on push to main
+
+```yaml
+# .github/workflows/discord.yml
+name: Discord sync
+
+on:
+  push:
+    branches: [main]
+    paths: [disform.yml, disform.state.json]
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Install disform
+        run: go install github.com/joshdholtz/disform@latest
+
+      - name: Apply
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: disform apply --auto-approve
+```
+
+### Plan on pull requests
+
+```yaml
+on:
+  pull_request:
+    paths: [disform.yml]
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Install disform
+        run: go install github.com/joshdholtz/disform@latest
+
+      - name: Plan
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: disform plan --detailed-exitcode
+        # exit 0 = no changes, exit 2 = changes, exit 1 = error
+```
+
+### Validate and format check
+
+```yaml
+- name: Validate config
+  run: disform validate
+
+- name: Check formatting
+  run: disform fmt --check
+```
+
+---
+
+## Bot Setup
 
 1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
-2. Create a new application → add a bot
-3. Under **Bot**, copy the token
-4. Under **OAuth2 → URL Generator**, select scopes `bot` and permissions:
+2. Create a new application → **Bot** tab → copy the token
+3. Under **OAuth2 → URL Generator**, select scope `bot` with permissions:
    - Manage Roles
    - Manage Channels
-5. Use the generated URL to invite the bot to your server
+4. Open the generated URL and invite the bot to your server
 
-> **Note:** The bot's role must be positioned above any roles it manages in the server's role hierarchy.
+> **Important:** The bot's role must be positioned **above** any roles it manages in your server's role hierarchy. Discord enforces this at the API level.
 
 ---
 
@@ -369,10 +718,19 @@ The state file is how disform:
 git clone https://github.com/joshdholtz/disform
 cd disform
 go test ./...
+go test -race ./...
+go vet ./...
+gofmt -w .
 go build -o disform .
 ```
 
-Pull requests are welcome. Please run `gofmt -w .` and `go vet ./...` before submitting.
+Run the linter (requires [golangci-lint](https://golangci-lint.run/)):
+
+```sh
+golangci-lint run
+```
+
+Pull requests welcome. Please run `gofmt` and `go vet` before submitting.
 
 ---
 
