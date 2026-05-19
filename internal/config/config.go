@@ -64,8 +64,20 @@ var discordPermissions = map[string]int64{
 // Config represents the top-level disform configuration.
 type Config struct {
 	ServerID   string                    `yaml:"server_id"`
+	Settings   *ServerSettings           `yaml:"settings,omitempty"`
 	Roles      map[string]RoleConfig     `yaml:"roles"`
+	Channels   map[string]ChannelConfig  `yaml:"channels,omitempty"`
 	Categories map[string]CategoryConfig `yaml:"categories"`
+}
+
+// ServerSettings defines optional Discord guild-level settings.
+type ServerSettings struct {
+	VerificationLevel           string `yaml:"verification_level,omitempty"`
+	ExplicitContentFilter       string `yaml:"explicit_content_filter,omitempty"`
+	DefaultMessageNotifications string `yaml:"default_message_notifications,omitempty"`
+	AFKTimeout                  int    `yaml:"afk_timeout,omitempty"`
+	AFKChannel                  string `yaml:"afk_channel,omitempty"`
+	SystemChannel               string `yaml:"system_channel,omitempty"`
 }
 
 // RoleConfig defines a Discord role.
@@ -100,6 +112,46 @@ type PermissionOverwriteConfig struct {
 	Deny  []string `yaml:"deny"`
 }
 
+var validVerificationLevels = map[string]int{
+	"none": 0, "low": 1, "medium": 2, "high": 3, "very_high": 4,
+}
+var validContentFilters = map[string]int{
+	"disabled": 0, "members_without_roles": 1, "all_members": 2,
+}
+var validDefaultNotifications = map[string]int{
+	"all_messages": 0, "only_mentions": 1,
+}
+var validAFKTimeouts = map[int]bool{
+	0: true, 60: true, 300: true, 900: true, 1800: true, 3600: true,
+}
+
+// VerificationLevelToInt converts a verification level string to its Discord integer value.
+func VerificationLevelToInt(level string) (int, error) {
+	v, ok := validVerificationLevels[level]
+	if !ok {
+		return 0, fmt.Errorf("invalid verification_level %q", level)
+	}
+	return v, nil
+}
+
+// ContentFilterToInt converts a content filter string to its Discord integer value.
+func ContentFilterToInt(filter string) (int, error) {
+	v, ok := validContentFilters[filter]
+	if !ok {
+		return 0, fmt.Errorf("invalid explicit_content_filter %q", filter)
+	}
+	return v, nil
+}
+
+// DefaultNotificationsToInt converts a default notifications string to its Discord integer value.
+func DefaultNotificationsToInt(notif string) (int, error) {
+	v, ok := validDefaultNotifications[notif]
+	if !ok {
+		return 0, fmt.Errorf("invalid default_message_notifications %q", notif)
+	}
+	return v, nil
+}
+
 // LoadConfig reads and validates a YAML config file.
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -114,6 +166,9 @@ func LoadConfig(path string) (*Config, error) {
 
 	if cfg.Roles == nil {
 		cfg.Roles = make(map[string]RoleConfig)
+	}
+	if cfg.Channels == nil {
+		cfg.Channels = make(map[string]ChannelConfig)
 	}
 	if cfg.Categories == nil {
 		cfg.Categories = make(map[string]CategoryConfig)
@@ -145,6 +200,26 @@ func Validate(c *Config) error {
 		}
 	}
 
+	for chanName, ch := range c.Channels {
+		if ch.Type != "" {
+			if !ValidChannelTypes[ch.Type] {
+				return fmt.Errorf("channel %q: invalid type %q", chanName, ch.Type)
+			}
+		}
+		for target, overwrite := range ch.Permissions {
+			for _, perm := range overwrite.Allow {
+				if _, ok := discordPermissions[perm]; !ok {
+					return fmt.Errorf("channel %q, permission target %q: unknown allow permission %q", chanName, target, perm)
+				}
+			}
+			for _, perm := range overwrite.Deny {
+				if _, ok := discordPermissions[perm]; !ok {
+					return fmt.Errorf("channel %q, permission target %q: unknown deny permission %q", chanName, target, perm)
+				}
+			}
+		}
+	}
+
 	for catName, cat := range c.Categories {
 		for chanName, ch := range cat.Channels {
 			if ch.Type != "" {
@@ -163,6 +238,30 @@ func Validate(c *Config) error {
 						return fmt.Errorf("category %q, channel %q, permission target %q: unknown deny permission %q", catName, chanName, target, perm)
 					}
 				}
+			}
+		}
+	}
+
+	if c.Settings != nil {
+		s := c.Settings
+		if s.VerificationLevel != "" {
+			if _, ok := validVerificationLevels[s.VerificationLevel]; !ok {
+				return fmt.Errorf("settings: invalid verification_level %q", s.VerificationLevel)
+			}
+		}
+		if s.ExplicitContentFilter != "" {
+			if _, ok := validContentFilters[s.ExplicitContentFilter]; !ok {
+				return fmt.Errorf("settings: invalid explicit_content_filter %q", s.ExplicitContentFilter)
+			}
+		}
+		if s.DefaultMessageNotifications != "" {
+			if _, ok := validDefaultNotifications[s.DefaultMessageNotifications]; !ok {
+				return fmt.Errorf("settings: invalid default_message_notifications %q", s.DefaultMessageNotifications)
+			}
+		}
+		if s.AFKTimeout != 0 {
+			if !validAFKTimeouts[s.AFKTimeout] {
+				return fmt.Errorf("settings: invalid afk_timeout %d", s.AFKTimeout)
 			}
 		}
 	}

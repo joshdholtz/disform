@@ -69,8 +69,13 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// fetchLiveState fetches current Discord channels and roles into a LiveState.
+// fetchLiveState fetches current Discord guild, channels, and roles into a LiveState.
 func fetchLiveState(client discord.Client, serverID string) (*planner.LiveState, error) {
+	guild, err := client.GetGuild(serverID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching guild: %w", err)
+	}
+
 	channels, err := client.GetChannels(serverID)
 	if err != nil {
 		return nil, fmt.Errorf("fetching channels: %w", err)
@@ -82,6 +87,7 @@ func fetchLiveState(client discord.Client, serverID string) (*planner.LiveState,
 	}
 
 	live := &planner.LiveState{
+		Guild:      guild,
 		Roles:      make(map[string]*discord.Role),
 		Categories: make(map[string]*discord.Channel),
 		Channels:   make(map[string]*discord.Channel),
@@ -227,8 +233,10 @@ func resourceTypeOrder(rt planner.ResourceType) int {
 		return 1
 	case planner.ResourceChannel:
 		return 2
-	default:
+	case planner.ResourceSettings:
 		return 3
+	default:
+		return 4
 	}
 }
 

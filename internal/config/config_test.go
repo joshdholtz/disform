@@ -388,3 +388,176 @@ func TestAllPermissionsValid(t *testing.T) {
 		t.Error("expected non-zero permissions result")
 	}
 }
+
+func TestValidateServerSettings(t *testing.T) {
+	cfg := &Config{
+		ServerID: "123",
+		Settings: &ServerSettings{
+			VerificationLevel:           "medium",
+			ExplicitContentFilter:       "all_members",
+			DefaultMessageNotifications: "only_mentions",
+			AFKTimeout:                  300,
+		},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("unexpected error for valid settings: %v", err)
+	}
+}
+
+func TestValidateInvalidVerificationLevel(t *testing.T) {
+	cfg := &Config{
+		ServerID: "123",
+		Settings: &ServerSettings{
+			VerificationLevel: "extreme",
+		},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid verification_level")
+	}
+}
+
+func TestValidateInvalidContentFilter(t *testing.T) {
+	cfg := &Config{
+		ServerID: "123",
+		Settings: &ServerSettings{
+			ExplicitContentFilter: "unknown_filter",
+		},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid explicit_content_filter")
+	}
+}
+
+func TestValidateInvalidAFKTimeout(t *testing.T) {
+	cfg := &Config{
+		ServerID: "123",
+		Settings: &ServerSettings{
+			AFKTimeout: 999,
+		},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid afk_timeout")
+	}
+}
+
+func TestVerificationLevelToInt(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+		wantErr  bool
+	}{
+		{"none", 0, false},
+		{"low", 1, false},
+		{"medium", 2, false},
+		{"high", 3, false},
+		{"very_high", 4, false},
+		{"invalid", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := VerificationLevelToInt(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if got != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, got)
+			}
+		})
+	}
+}
+
+func TestContentFilterToInt(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+		wantErr  bool
+	}{
+		{"disabled", 0, false},
+		{"members_without_roles", 1, false},
+		{"all_members", 2, false},
+		{"invalid", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := ContentFilterToInt(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if got != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, got)
+			}
+		})
+	}
+}
+
+func TestDefaultNotificationsToInt(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+		wantErr  bool
+	}{
+		{"all_messages", 0, false},
+		{"only_mentions", 1, false},
+		{"invalid", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := DefaultNotificationsToInt(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if got != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, got)
+			}
+		})
+	}
+}
+
+func TestValidateTopLevelChannels(t *testing.T) {
+	cfg := &Config{
+		ServerID: "123",
+		Channels: map[string]ChannelConfig{
+			"announcements": {Type: "announcement"},
+			"general":       {Type: "text", Topic: "Main chat"},
+		},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("unexpected error for valid top-level channels: %v", err)
+	}
+
+	// Invalid type in top-level channel.
+	cfg2 := &Config{
+		ServerID: "123",
+		Channels: map[string]ChannelConfig{
+			"bad": {Type: "invalid_type"},
+		},
+	}
+	err := Validate(cfg2)
+	if err == nil {
+		t.Fatal("expected error for invalid top-level channel type")
+	}
+}

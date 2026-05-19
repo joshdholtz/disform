@@ -27,7 +27,10 @@ const (
 	ResourceRole     ResourceType = "role"
 	ResourceCategory ResourceType = "category"
 	ResourceChannel  ResourceType = "channel"
+	ResourceSettings ResourceType = "settings"
 )
+
+const everyoneRoleName = "@everyone"
 
 // FieldChange records a single field change for an update action.
 type FieldChange struct {
@@ -65,6 +68,7 @@ func (p *Plan) Summary() string {
 
 // LiveState holds the current state of Discord resources, keyed by Discord ID.
 type LiveState struct {
+	Guild      *discord.Guild
 	Roles      map[string]*discord.Role    // keyed by discord ID
 	Categories map[string]*discord.Channel // keyed by discord ID
 	Channels   map[string]*discord.Channel // keyed by discord ID
@@ -99,6 +103,12 @@ func (p *Planner) Plan() (*Plan, error) {
 	if err := p.planChannels(plan); err != nil {
 		return nil, fmt.Errorf("planning channels: %w", err)
 	}
+	if err := p.planTopLevelChannels(plan); err != nil {
+		return nil, fmt.Errorf("planning top-level channels: %w", err)
+	}
+	if err := p.planSettings(plan); err != nil {
+		return nil, fmt.Errorf("planning settings: %w", err)
+	}
 
 	return plan, nil
 }
@@ -122,6 +132,34 @@ func (p *Planner) planRoles(plan *Plan) error {
 
 	for _, name := range roleNames {
 		roleCfg := p.config.Roles[name]
+
+		// Handle @everyone specially.
+		if name == everyoneRoleName {
+			// Find the live @everyone role (ID == guild ID).
+			liveRole, inLive := p.liveState.Roles[p.config.ServerID]
+			if !inLive {
+				continue
+			}
+			// Compare only permissions for @everyone.
+			wantPerms, err := config.PermissionsToInt(roleCfg.Permissions)
+			if err != nil {
+				return fmt.Errorf("comparing @everyone role permissions: %w", err)
+			}
+			wantPermsStr := strconv.FormatInt(wantPerms, 10)
+			if wantPermsStr != liveRole.Permissions {
+				p.addAction(plan, Action{
+					Type:         ActionUpdate,
+					ResourceType: ResourceRole,
+					Name:         everyoneRoleName,
+					DiscordID:    p.config.ServerID,
+					Changes: []FieldChange{
+						{Field: "permissions", OldValue: liveRole.Permissions, NewValue: wantPermsStr},
+					},
+				})
+			}
+			continue
+		}
+
 		discordID, inState := p.state.GetRoleID(name)
 
 		if !inState {
@@ -165,6 +203,9 @@ func (p *Planner) planRoles(plan *Plan) error {
 	// Roles in state but not in config → delete.
 	stateRoleNames := sortedStringKeys(p.state.Roles)
 	for _, name := range stateRoleNames {
+		if name == everyoneRoleName {
+			continue
+		}
 		if _, ok := p.config.Roles[name]; !ok {
 			discordID, _ := p.state.GetRoleID(name)
 			p.addAction(plan, Action{
@@ -285,6 +326,11 @@ func (p *Planner) planChannels(plan *Plan) error {
 	// Channels in state but not in config → delete.
 	chanKeys := sortedStringKeys(p.state.Channels)
 	for _, key := range chanKeys {
+		// Skip top-level channels (key starts with "/") — handled by planTopLevelChannels.
+		if strings.HasPrefix(key, "/") {
+			continue
+		}
+
 		catName, chanName, err := parseChannelKey(key)
 		if err != nil {
 			continue
@@ -314,6 +360,190 @@ func (p *Planner) planChannels(plan *Plan) error {
 	}
 
 	return nil
+}
+
+// planTopLevelChannels computes create/update/delete actions for top-level channels (no category).
+func (p *Planner) planTopLevelChannels(plan *Plan) error {
+	chanNames := sortedKeys(p.config.Channels)
+
+	for _, chanName := range chanNames {
+		chanCfg := p.config.Channels[chanName]
+		discordID, inState := p.state.GetChannelID("", chanName)
+
+		if !inState {
+			p.addAction(plan, Action{
+				Type:         ActionCreate,
+				ResourceType: ResourceChannel,
+				Name:         state.ChannelKey("", chanName),
+			})
+			continue
+		}
+
+		liveChannel, inLive := p.liveState.Channels[discordID]
+		if !inLive {
+			p.addAction(plan, Action{
+				Type:         ActionCreate,
+				ResourceType: ResourceChannel,
+				Name:         state.ChannelKey("", chanName),
+			})
+			continue
+		}
+
+		changes, err := compareChannel(chanCfg, liveChannel)
+		if err != nil {
+			return fmt.Errorf("comparing top-level channel %q: %w", chanName, err)
+		}
+		if len(changes) > 0 {
+			p.addAction(plan, Action{
+				Type:         ActionUpdate,
+				ResourceType: ResourceChannel,
+				Name:         state.ChannelKey("", chanName),
+				DiscordID:    discordID,
+				Changes:      changes,
+			})
+		}
+	}
+
+	// Top-level channels in state (key starts with "/") but not in config → delete.
+	chanKeys := sortedStringKeys(p.state.Channels)
+	for _, key := range chanKeys {
+		if !strings.HasPrefix(key, "/") {
+			continue
+		}
+		chanName := key[1:] // strip leading "/"
+		if _, inConfig := p.config.Channels[chanName]; !inConfig {
+			discordID := p.state.Channels[key].DiscordID
+			p.addAction(plan, Action{
+				Type:         ActionDelete,
+				ResourceType: ResourceChannel,
+				Name:         key,
+				DiscordID:    discordID,
+			})
+		}
+	}
+
+	return nil
+}
+
+// planSettings computes guild settings update action.
+func (p *Planner) planSettings(plan *Plan) error {
+	if p.config.Settings == nil {
+		return nil
+	}
+	if p.liveState.Guild == nil {
+		return nil
+	}
+
+	s := p.config.Settings
+	live := p.liveState.Guild
+	var changes []FieldChange
+
+	if s.VerificationLevel != "" {
+		wantVal, err := config.VerificationLevelToInt(s.VerificationLevel)
+		if err != nil {
+			return err
+		}
+		if wantVal != live.VerificationLevel {
+			changes = append(changes, FieldChange{
+				Field:    "verification_level",
+				OldValue: strconv.Itoa(live.VerificationLevel),
+				NewValue: s.VerificationLevel,
+			})
+		}
+	}
+
+	if s.ExplicitContentFilter != "" {
+		wantVal, err := config.ContentFilterToInt(s.ExplicitContentFilter)
+		if err != nil {
+			return err
+		}
+		if wantVal != live.ExplicitContentFilter {
+			changes = append(changes, FieldChange{
+				Field:    "explicit_content_filter",
+				OldValue: strconv.Itoa(live.ExplicitContentFilter),
+				NewValue: s.ExplicitContentFilter,
+			})
+		}
+	}
+
+	if s.DefaultMessageNotifications != "" {
+		wantVal, err := config.DefaultNotificationsToInt(s.DefaultMessageNotifications)
+		if err != nil {
+			return err
+		}
+		if wantVal != live.DefaultMessageNotifications {
+			changes = append(changes, FieldChange{
+				Field:    "default_message_notifications",
+				OldValue: strconv.Itoa(live.DefaultMessageNotifications),
+				NewValue: s.DefaultMessageNotifications,
+			})
+		}
+	}
+
+	if s.AFKTimeout != live.AFKTimeout {
+		changes = append(changes, FieldChange{
+			Field:    "afk_timeout",
+			OldValue: strconv.Itoa(live.AFKTimeout),
+			NewValue: strconv.Itoa(s.AFKTimeout),
+		})
+	}
+
+	if s.AFKChannel != "" {
+		wantID := p.resolveChannelNameToID(s.AFKChannel)
+		liveID := ""
+		if live.AFKChannelID != nil {
+			liveID = *live.AFKChannelID
+		}
+		if wantID != liveID {
+			changes = append(changes, FieldChange{
+				Field:    "afk_channel",
+				OldValue: liveID,
+				NewValue: s.AFKChannel,
+			})
+		}
+	}
+
+	if s.SystemChannel != "" {
+		wantID := p.resolveChannelNameToID(s.SystemChannel)
+		liveID := ""
+		if live.SystemChannelID != nil {
+			liveID = *live.SystemChannelID
+		}
+		if wantID != liveID {
+			changes = append(changes, FieldChange{
+				Field:    "system_channel",
+				OldValue: liveID,
+				NewValue: s.SystemChannel,
+			})
+		}
+	}
+
+	if len(changes) > 0 {
+		p.addAction(plan, Action{
+			Type:         ActionUpdate,
+			ResourceType: ResourceSettings,
+			Name:         "server_settings",
+			DiscordID:    p.config.ServerID,
+			Changes:      changes,
+		})
+	}
+
+	return nil
+}
+
+// resolveChannelNameToID looks up a channel name in state (top-level first, then categorized).
+func (p *Planner) resolveChannelNameToID(chanName string) string {
+	// Check top-level channels first.
+	if id, ok := p.state.GetChannelID("", chanName); ok {
+		return id
+	}
+	// Check categorized channels.
+	for catName := range p.config.Categories {
+		if id, ok := p.state.GetChannelID(catName, chanName); ok {
+			return id
+		}
+	}
+	return ""
 }
 
 // compareRole returns a list of field changes between the config and live role.
@@ -476,6 +706,7 @@ func channelTypeToInt(t string) int {
 }
 
 // parseChannelKey splits a "CategoryName/channel-name" key into its two parts.
+// For top-level channels the key is "/channel-name" which returns ("", "channel-name", nil).
 func parseChannelKey(key string) (string, string, error) {
 	idx := strings.Index(key, "/")
 	if idx < 0 {

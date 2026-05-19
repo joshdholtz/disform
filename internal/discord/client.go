@@ -23,6 +23,7 @@ type Client interface {
 	DeleteRole(guildID, roleID string) error
 	EditChannelPermissions(channelID, overwriteID string, params EditChannelPermissionsParams) error
 	DeleteChannelPermission(channelID, overwriteID string) error
+	ModifyGuild(guildID string, params ModifyGuildParams) (*Guild, error)
 }
 
 // HTTPClient is the concrete Discord API client using HTTP.
@@ -268,4 +269,17 @@ func (c *HTTPClient) DeleteChannelPermission(channelID, overwriteID string) erro
 		return fmt.Errorf("DeleteChannelPermission channel %q overwrite %q: %w", channelID, overwriteID, err)
 	}
 	return nil
+}
+
+// ModifyGuild modifies an existing guild.
+func (c *HTTPClient) ModifyGuild(guildID string, params ModifyGuildParams) (*Guild, error) {
+	data, err := c.request("PATCH", "/guilds/"+guildID, params)
+	if err != nil {
+		return nil, fmt.Errorf("ModifyGuild %q: %w", guildID, err)
+	}
+	var guild Guild
+	if err := json.Unmarshal(data, &guild); err != nil {
+		return nil, fmt.Errorf("ModifyGuild %q: parsing response: %w", guildID, err)
+	}
+	return &guild, nil
 }

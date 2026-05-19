@@ -515,3 +515,51 @@ func TestDeleteChannelReturnsError(t *testing.T) {
 		t.Errorf("expected error to mention 404, got: %v", err)
 	}
 }
+
+func TestModifyGuild(t *testing.T) {
+	var receivedBody ModifyGuildParams
+	verificationLevel := 2
+	afkTimeout := 300
+	returned := &Guild{
+		ID:                "123456789",
+		Name:              "Test Server",
+		VerificationLevel: verificationLevel,
+		AFKTimeout:        afkTimeout,
+	}
+
+	_, client := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("expected PATCH, got %s", r.Method)
+		}
+		if r.URL.Path != "/guilds/123456789" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("expected Content-Type application/json, got %s", ct)
+		}
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(returned)
+	})
+
+	params := ModifyGuildParams{
+		VerificationLevel: &verificationLevel,
+		AFKTimeout:        &afkTimeout,
+	}
+	guild, err := client.ModifyGuild("123456789", params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if guild.ID != "123456789" {
+		t.Errorf("expected guild ID '123456789', got %q", guild.ID)
+	}
+	if guild.VerificationLevel != verificationLevel {
+		t.Errorf("expected VerificationLevel %d, got %d", verificationLevel, guild.VerificationLevel)
+	}
+	if receivedBody.VerificationLevel == nil || *receivedBody.VerificationLevel != verificationLevel {
+		t.Errorf("expected body VerificationLevel=%d", verificationLevel)
+	}
+	if receivedBody.AFKTimeout == nil || *receivedBody.AFKTimeout != afkTimeout {
+		t.Errorf("expected body AFKTimeout=%d", afkTimeout)
+	}
+}

@@ -50,6 +50,7 @@ func (a *Applier) Apply(plan *planner.Plan) error {
 			planner.ResourceRole,
 			planner.ResourceCategory,
 			planner.ResourceChannel,
+			planner.ResourceSettings,
 		}); err != nil {
 			return err
 		}
@@ -102,6 +103,8 @@ func (a *Applier) ApplyAction(action planner.Action) error {
 			return a.applyUpdateCategory(action)
 		case planner.ResourceChannel:
 			return a.applyUpdateChannel(action)
+		case planner.ResourceSettings:
+			return a.applyUpdateSettings(action)
 		}
 	case planner.ActionDelete:
 		switch action.ResourceType {
@@ -253,17 +256,28 @@ func (a *Applier) applyCreateChannel(action planner.Action) error {
 		return err
 	}
 
-	cat, ok := a.config.Categories[catName]
-	if !ok {
-		return fmt.Errorf("category %q not found in config", catName)
-	}
+	var chanCfg config.ChannelConfig
+	var parentID string
 
-	chanCfg, ok := cat.Channels[chanName]
-	if !ok {
-		return fmt.Errorf("channel %q not found in category %q", chanName, catName)
+	if catName == "" {
+		// Top-level channel.
+		var ok bool
+		chanCfg, ok = a.config.Channels[chanName]
+		if !ok {
+			return fmt.Errorf("top-level channel %q not found in config", chanName)
+		}
+		// No parentID for top-level channels.
+	} else {
+		cat, ok := a.config.Categories[catName]
+		if !ok {
+			return fmt.Errorf("category %q not found in config", catName)
+		}
+		chanCfg, ok = cat.Channels[chanName]
+		if !ok {
+			return fmt.Errorf("channel %q not found in category %q", chanName, catName)
+		}
+		parentID, _ = a.state.GetCategoryID(catName)
 	}
-
-	parentID, _ := a.state.GetCategoryID(catName)
 
 	chanType := channelTypeToInt(chanCfg.Type)
 
@@ -340,22 +354,31 @@ func (a *Applier) applyUpdateChannel(action planner.Action) error {
 	}
 
 	// Sync permission overwrites.
-	cat, catOk := a.config.Categories[catName]
-	if catOk {
-		if chanCfg, chanOk := cat.Channels[chanName]; chanOk {
-			overwrites, err := a.resolvePermissionOverwrites(chanCfg.Permissions)
-			if err != nil {
-				return fmt.Errorf("resolving permissions for channel %q: %w", action.Name, err)
+	var permCfg map[string]config.PermissionOverwriteConfig
+	if catName == "" {
+		if ch, ok := a.config.Channels[chanName]; ok {
+			permCfg = ch.Permissions
+		}
+	} else {
+		if cat, catOk := a.config.Categories[catName]; catOk {
+			if ch, chanOk := cat.Channels[chanName]; chanOk {
+				permCfg = ch.Permissions
 			}
-			for _, ow := range overwrites {
-				permParams := discord.EditChannelPermissionsParams{
-					Allow: ow.Allow,
-					Deny:  ow.Deny,
-					Type:  ow.Type,
-				}
-				if err := a.client.EditChannelPermissions(action.DiscordID, ow.ID, permParams); err != nil {
-					return fmt.Errorf("syncing permissions for channel %q overwrite %q: %w", action.Name, ow.ID, err)
-				}
+		}
+	}
+	if permCfg != nil {
+		overwrites, err := a.resolvePermissionOverwrites(permCfg)
+		if err != nil {
+			return fmt.Errorf("resolving permissions for channel %q: %w", action.Name, err)
+		}
+		for _, ow := range overwrites {
+			permParams := discord.EditChannelPermissionsParams{
+				Allow: ow.Allow,
+				Deny:  ow.Deny,
+				Type:  ow.Type,
+			}
+			if err := a.client.EditChannelPermissions(action.DiscordID, ow.ID, permParams); err != nil {
+				return fmt.Errorf("syncing permissions for channel %q overwrite %q: %w", action.Name, ow.ID, err)
 			}
 		}
 	}
@@ -376,6 +399,70 @@ func (a *Applier) applyDeleteChannel(action planner.Action) error {
 
 	a.state.DeleteChannel(catName, chanName)
 	return nil
+}
+
+// applyUpdateSettings applies server-level setting changes to Discord.
+func (a *Applier) applyUpdateSettings(action planner.Action) error {
+	params := discord.ModifyGuildParams{}
+
+	for _, change := range action.Changes {
+		switch change.Field {
+		case "verification_level":
+			v, err := config.VerificationLevelToInt(change.NewValue)
+			if err != nil {
+				return fmt.Errorf("invalid verification_level %q: %w", change.NewValue, err)
+			}
+			params.VerificationLevel = &v
+		case "explicit_content_filter":
+			v, err := config.ContentFilterToInt(change.NewValue)
+			if err != nil {
+				return fmt.Errorf("invalid explicit_content_filter %q: %w", change.NewValue, err)
+			}
+			params.ExplicitContentFilter = &v
+		case "default_message_notifications":
+			v, err := config.DefaultNotificationsToInt(change.NewValue)
+			if err != nil {
+				return fmt.Errorf("invalid default_message_notifications %q: %w", change.NewValue, err)
+			}
+			params.DefaultMessageNotifications = &v
+		case "afk_timeout":
+			v, err := strconv.Atoi(change.NewValue)
+			if err != nil {
+				return fmt.Errorf("invalid afk_timeout %q: %w", change.NewValue, err)
+			}
+			params.AFKTimeout = &v
+		case "afk_channel":
+			// Resolve channel name to ID via state.
+			chanName := change.NewValue
+			chanID := a.resolveChannelNameToID(chanName)
+			params.AFKChannelID = &chanID
+		case "system_channel":
+			chanName := change.NewValue
+			chanID := a.resolveChannelNameToID(chanName)
+			params.SystemChannelID = &chanID
+		}
+	}
+
+	_, err := a.client.ModifyGuild(a.config.ServerID, params)
+	if err != nil {
+		return fmt.Errorf("modifying guild settings: %w", err)
+	}
+	return nil
+}
+
+// resolveChannelNameToID looks up a channel name in state (top-level first, then categorized).
+func (a *Applier) resolveChannelNameToID(chanName string) string {
+	// Check top-level channels first.
+	if id, ok := a.state.GetChannelID("", chanName); ok {
+		return id
+	}
+	// Check categorized channels.
+	for catName := range a.config.Categories {
+		if id, ok := a.state.GetChannelID(catName, chanName); ok {
+			return id
+		}
+	}
+	return ""
 }
 
 // resolvePermissionOverwrites converts config permission overwrites to Discord API format.
@@ -439,6 +526,7 @@ func channelTypeToInt(t string) int {
 }
 
 // parseChannelName splits "CategoryName/channel-name" into category and channel.
+// For top-level channels the name is "/channel-name" which returns ("", "channel-name", nil).
 func parseChannelName(name string) (string, string, error) {
 	idx := strings.Index(name, "/")
 	if idx < 0 {

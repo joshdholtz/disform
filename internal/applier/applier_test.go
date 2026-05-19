@@ -39,6 +39,11 @@ type EditPermCall struct {
 	Params      discord.EditChannelPermissionsParams
 }
 
+type ModifyGuildCall struct {
+	GuildID string
+	Params  discord.ModifyGuildParams
+}
+
 type mockClient struct {
 	createChannelCalls []CreateChannelCall
 	updateChannelCalls []UpdateChannelCall
@@ -48,6 +53,7 @@ type mockClient struct {
 	deleteRoleCalls    []string
 	editPermCalls      []EditPermCall
 	deletePermCalls    []string
+	modifyGuildCalls   []ModifyGuildCall
 
 	channelResponses map[string]*discord.Channel
 	roleResponses    map[string]*discord.Role
@@ -140,6 +146,14 @@ func (m *mockClient) EditChannelPermissions(channelID, overwriteID string, param
 func (m *mockClient) DeleteChannelPermission(channelID, overwriteID string) error {
 	m.deletePermCalls = append(m.deletePermCalls, channelID+"/"+overwriteID)
 	return nil
+}
+
+func (m *mockClient) ModifyGuild(guildID string, params discord.ModifyGuildParams) (*discord.Guild, error) {
+	m.modifyGuildCalls = append(m.modifyGuildCalls, ModifyGuildCall{GuildID: guildID, Params: params})
+	if err := m.errors["modify_guild_"+guildID]; err != nil {
+		return nil, err
+	}
+	return &discord.Guild{ID: guildID, Name: "Test Server"}, nil
 }
 
 // --- Helpers ---
@@ -930,5 +944,130 @@ func TestApplyUpdateChannelSyncsPermissions(t *testing.T) {
 	// @everyone uses server ID
 	if client.editPermCalls[0].OverwriteID != "server-123" {
 		t.Errorf("expected overwrite ID 'server-123', got %q", client.editPermCalls[0].OverwriteID)
+	}
+}
+
+// TestApplyUpdateSettings verifies ModifyGuild is called with correct params.
+func TestApplyUpdateSettings(t *testing.T) {
+	client := newMockClient()
+	st := state.NewState("server-123")
+	cfg := makeConfig("server-123", nil, nil)
+	cfg.Settings = &config.ServerSettings{
+		VerificationLevel:           "high",
+		ExplicitContentFilter:       "all_members",
+		DefaultMessageNotifications: "only_mentions",
+		AFKTimeout:                  300,
+	}
+
+	a := NewApplier(client, st, cfg)
+	action := planner.Action{
+		Type:         planner.ActionUpdate,
+		ResourceType: planner.ResourceSettings,
+		Name:         "server_settings",
+		DiscordID:    "server-123",
+		Changes: []planner.FieldChange{
+			{Field: "verification_level", OldValue: "1", NewValue: "high"},
+			{Field: "explicit_content_filter", OldValue: "0", NewValue: "all_members"},
+			{Field: "default_message_notifications", OldValue: "0", NewValue: "only_mentions"},
+			{Field: "afk_timeout", OldValue: "0", NewValue: "300"},
+		},
+	}
+
+	if err := a.ApplyAction(action); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.modifyGuildCalls) != 1 {
+		t.Fatalf("expected 1 ModifyGuild call, got %d", len(client.modifyGuildCalls))
+	}
+	call := client.modifyGuildCalls[0]
+	if call.GuildID != "server-123" {
+		t.Errorf("expected guildID 'server-123', got %q", call.GuildID)
+	}
+	if call.Params.VerificationLevel == nil || *call.Params.VerificationLevel != 3 {
+		t.Errorf("expected VerificationLevel=3 (high), got %v", call.Params.VerificationLevel)
+	}
+	if call.Params.ExplicitContentFilter == nil || *call.Params.ExplicitContentFilter != 2 {
+		t.Errorf("expected ExplicitContentFilter=2 (all_members), got %v", call.Params.ExplicitContentFilter)
+	}
+	if call.Params.DefaultMessageNotifications == nil || *call.Params.DefaultMessageNotifications != 1 {
+		t.Errorf("expected DefaultMessageNotifications=1 (only_mentions), got %v", call.Params.DefaultMessageNotifications)
+	}
+	if call.Params.AFKTimeout == nil || *call.Params.AFKTimeout != 300 {
+		t.Errorf("expected AFKTimeout=300, got %v", call.Params.AFKTimeout)
+	}
+}
+
+// TestApplyCreateTopLevelChannel verifies CreateChannel is called without parent_id.
+func TestApplyCreateTopLevelChannel(t *testing.T) {
+	client := newMockClient()
+	st := state.NewState("server-123")
+	cfg := makeConfig("server-123", nil, nil)
+	cfg.Channels = map[string]config.ChannelConfig{
+		"announcements": {Type: "announcement", Topic: "Server announcements"},
+	}
+
+	a := NewApplier(client, st, cfg)
+	action := planner.Action{
+		Type:         planner.ActionCreate,
+		ResourceType: planner.ResourceChannel,
+		Name:         "/announcements",
+	}
+
+	if err := a.ApplyAction(action); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.createChannelCalls) != 1 {
+		t.Fatalf("expected 1 CreateChannel call, got %d", len(client.createChannelCalls))
+	}
+	call := client.createChannelCalls[0]
+	if call.Params.Name != "announcements" {
+		t.Errorf("expected name 'announcements', got %q", call.Params.Name)
+	}
+	if call.Params.Type != discord.ChannelTypeGuildAnnouncement {
+		t.Errorf("expected type announcement (%d), got %d", discord.ChannelTypeGuildAnnouncement, call.Params.Type)
+	}
+	if call.Params.ParentID != "" {
+		t.Errorf("expected empty ParentID for top-level channel, got %q", call.Params.ParentID)
+	}
+	if call.Params.Topic != "Server announcements" {
+		t.Errorf("expected topic 'Server announcements', got %q", call.Params.Topic)
+	}
+
+	// Verify state updated with empty category.
+	id, ok := st.GetChannelID("", "announcements")
+	if !ok || id == "" {
+		t.Error("expected top-level channel recorded in state with empty category")
+	}
+}
+
+// TestApplyDeleteTopLevelChannel verifies DeleteChannel called and state cleaned up.
+func TestApplyDeleteTopLevelChannel(t *testing.T) {
+	client := newMockClient()
+	st := state.NewState("server-123")
+	st.SetChannel("", "old-announce", "ch-777")
+	cfg := makeConfig("server-123", nil, nil)
+	cfg.Channels = map[string]config.ChannelConfig{}
+
+	a := NewApplier(client, st, cfg)
+	action := planner.Action{
+		Type:         planner.ActionDelete,
+		ResourceType: planner.ResourceChannel,
+		Name:         "/old-announce",
+		DiscordID:    "ch-777",
+	}
+
+	if err := a.ApplyAction(action); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.deleteChannelCalls) != 1 || client.deleteChannelCalls[0] != "ch-777" {
+		t.Errorf("expected DeleteChannel('ch-777'), got %v", client.deleteChannelCalls)
+	}
+
+	_, ok := st.GetChannelID("", "old-announce")
+	if ok {
+		t.Error("expected top-level channel removed from state")
 	}
 }

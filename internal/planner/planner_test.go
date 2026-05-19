@@ -1158,3 +1158,336 @@ func TestPlanMultipleCategories(t *testing.T) {
 		t.Errorf("unexpected summary: %s", plan.Summary())
 	}
 }
+
+// --- Settings tests ---
+
+// TestPlanSettingsUpdate verifies that differing settings produce an update action.
+func TestPlanSettingsUpdate(t *testing.T) {
+	cfg := &config.Config{
+		ServerID: "guild-123",
+		Settings: &config.ServerSettings{
+			VerificationLevel:           "high",
+			ExplicitContentFilter:       "all_members",
+			DefaultMessageNotifications: "only_mentions",
+			AFKTimeout:                  300,
+		},
+	}
+
+	st := state.NewState("guild-123")
+	live := &LiveState{
+		Guild: &discord.Guild{
+			ID:                          "guild-123",
+			Name:                        "Test",
+			VerificationLevel:           1, // low
+			ExplicitContentFilter:       0, // disabled
+			DefaultMessageNotifications: 0, // all_messages
+			AFKTimeout:                  0,
+		},
+		Roles:      make(map[string]*discord.Role),
+		Categories: make(map[string]*discord.Channel),
+		Channels:   make(map[string]*discord.Channel),
+	}
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceSettings, "server_settings")
+	if action == nil {
+		t.Fatal("expected update action for server_settings")
+	}
+	if action.Type != ActionUpdate {
+		t.Errorf("expected ActionUpdate, got %s", action.Type)
+	}
+	if action.DiscordID != "guild-123" {
+		t.Errorf("expected DiscordID 'guild-123', got %q", action.DiscordID)
+	}
+	change := findFieldChange(action.Changes, "verification_level")
+	if change == nil {
+		t.Fatal("expected verification_level change")
+	}
+	if change.NewValue != "high" {
+		t.Errorf("expected new verification_level 'high', got %q", change.NewValue)
+	}
+}
+
+// TestPlanSettingsNoChange verifies no action when settings match live.
+func TestPlanSettingsNoChange(t *testing.T) {
+	cfg := &config.Config{
+		ServerID: "guild-123",
+		Settings: &config.ServerSettings{
+			VerificationLevel: "medium",
+		},
+	}
+
+	st := state.NewState("guild-123")
+	live := &LiveState{
+		Guild: &discord.Guild{
+			ID:                "guild-123",
+			VerificationLevel: 2, // medium
+		},
+		Roles:      make(map[string]*discord.Role),
+		Categories: make(map[string]*discord.Channel),
+		Channels:   make(map[string]*discord.Channel),
+	}
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceSettings, "server_settings")
+	if action != nil {
+		t.Errorf("expected no settings action, got: %+v", action)
+	}
+}
+
+// TestPlanSettingsNil verifies no action when settings are nil in config.
+func TestPlanSettingsNil(t *testing.T) {
+	cfg := &config.Config{
+		ServerID: "guild-123",
+		Settings: nil,
+	}
+
+	st := state.NewState("guild-123")
+	live := &LiveState{
+		Guild: &discord.Guild{
+			ID:                "guild-123",
+			VerificationLevel: 2,
+		},
+		Roles:      make(map[string]*discord.Role),
+		Categories: make(map[string]*discord.Channel),
+		Channels:   make(map[string]*discord.Channel),
+	}
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceSettings, "server_settings")
+	if action != nil {
+		t.Errorf("expected no settings action when settings nil, got: %+v", action)
+	}
+}
+
+// --- @everyone role tests ---
+
+// TestPlanEveryoneRoleUpdate verifies @everyone permissions differ → update with guild ID.
+func TestPlanEveryoneRoleUpdate(t *testing.T) {
+	cfg := &config.Config{
+		ServerID: "guild-123",
+		Roles: map[string]config.RoleConfig{
+			"@everyone": {Permissions: []string{"view_channel", "send_messages"}},
+		},
+	}
+
+	st := state.NewState("guild-123")
+	// @everyone role ID == guild ID in Discord.
+	live := &LiveState{
+		Roles: map[string]*discord.Role{
+			"guild-123": {ID: "guild-123", Name: "@everyone", Permissions: "0"},
+		},
+		Categories: make(map[string]*discord.Channel),
+		Channels:   make(map[string]*discord.Channel),
+	}
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceRole, "@everyone")
+	if action == nil {
+		t.Fatal("expected update action for @everyone")
+	}
+	if action.Type != ActionUpdate {
+		t.Errorf("expected ActionUpdate, got %s", action.Type)
+	}
+	if action.DiscordID != "guild-123" {
+		t.Errorf("expected DiscordID == guild ID 'guild-123', got %q", action.DiscordID)
+	}
+	change := findFieldChange(action.Changes, "permissions")
+	if change == nil {
+		t.Fatal("expected permissions change for @everyone")
+	}
+}
+
+// TestPlanEveryoneRoleNoChange verifies no action when @everyone permissions match.
+func TestPlanEveryoneRoleNoChange(t *testing.T) {
+	// view_channel (1<<10=1024) | send_messages (1<<11=2048) = 3072
+	cfg := &config.Config{
+		ServerID: "guild-123",
+		Roles: map[string]config.RoleConfig{
+			"@everyone": {Permissions: []string{"view_channel", "send_messages"}},
+		},
+	}
+
+	st := state.NewState("guild-123")
+	live := &LiveState{
+		Roles: map[string]*discord.Role{
+			"guild-123": {ID: "guild-123", Name: "@everyone", Permissions: "3072"},
+		},
+		Categories: make(map[string]*discord.Channel),
+		Channels:   make(map[string]*discord.Channel),
+	}
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceRole, "@everyone")
+	if action != nil {
+		t.Errorf("expected no action for @everyone when permissions match, got: %+v", action)
+	}
+}
+
+// TestPlanEveryoneRoleNotDeleted verifies @everyone is never in the delete list.
+func TestPlanEveryoneRoleNotDeleted(t *testing.T) {
+	// @everyone is in state but NOT in config.Roles — it should NOT be deleted.
+	cfg := &config.Config{
+		ServerID: "guild-123",
+		Roles:    map[string]config.RoleConfig{},
+	}
+
+	st := state.NewState("guild-123")
+	st.SetRole("@everyone", "guild-123")
+
+	live := &LiveState{
+		Roles: map[string]*discord.Role{
+			"guild-123": {ID: "guild-123", Name: "@everyone", Permissions: "0"},
+		},
+		Categories: make(map[string]*discord.Channel),
+		Channels:   make(map[string]*discord.Channel),
+	}
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, a := range plan.Actions {
+		if a.ResourceType == ResourceRole && a.Name == "@everyone" && a.Type == ActionDelete {
+			t.Error("@everyone should never be in the delete list")
+		}
+	}
+}
+
+// --- Top-level channel tests ---
+
+// TestPlanCreateTopLevelChannel verifies create action for a channel in config.Channels but not in state.
+func TestPlanCreateTopLevelChannel(t *testing.T) {
+	cfg := &config.Config{
+		ServerID:   "guild-123",
+		Channels:   map[string]config.ChannelConfig{"announcements": {Type: "announcement"}},
+		Categories: map[string]config.CategoryConfig{},
+	}
+
+	st := state.NewState("guild-123")
+	live := &LiveState{
+		Roles:      make(map[string]*discord.Role),
+		Categories: make(map[string]*discord.Channel),
+		Channels:   make(map[string]*discord.Channel),
+	}
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceChannel, "/announcements")
+	if action == nil {
+		t.Fatal("expected create action for top-level channel '/announcements'")
+	}
+	if action.Type != ActionCreate {
+		t.Errorf("expected ActionCreate, got %s", action.Type)
+	}
+}
+
+// TestPlanUpdateTopLevelChannel verifies update action when top-level channel topic changes.
+func TestPlanUpdateTopLevelChannel(t *testing.T) {
+	cfg := &config.Config{
+		ServerID:   "guild-123",
+		Channels:   map[string]config.ChannelConfig{"announcements": {Type: "announcement", Topic: "New topic"}},
+		Categories: map[string]config.CategoryConfig{},
+	}
+
+	st := state.NewState("guild-123")
+	st.SetChannel("", "announcements", "ch-999")
+
+	oldTopic := "Old topic"
+	live := &LiveState{
+		Roles:      make(map[string]*discord.Role),
+		Categories: make(map[string]*discord.Channel),
+		Channels: map[string]*discord.Channel{
+			"ch-999": {ID: "ch-999", Type: discord.ChannelTypeGuildAnnouncement, Name: "announcements", Topic: &oldTopic},
+		},
+	}
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceChannel, "/announcements")
+	if action == nil {
+		t.Fatal("expected update action for top-level channel '/announcements'")
+	}
+	if action.Type != ActionUpdate {
+		t.Errorf("expected ActionUpdate, got %s", action.Type)
+	}
+	change := findFieldChange(action.Changes, "topic")
+	if change == nil {
+		t.Fatal("expected topic field change")
+	}
+	if change.OldValue != "Old topic" || change.NewValue != "New topic" {
+		t.Errorf("expected topic change 'Old topic'->'New topic', got %q->%q", change.OldValue, change.NewValue)
+	}
+}
+
+// TestPlanDeleteTopLevelChannel verifies delete action for a top-level channel in state but not config.
+func TestPlanDeleteTopLevelChannel(t *testing.T) {
+	cfg := &config.Config{
+		ServerID:   "guild-123",
+		Channels:   map[string]config.ChannelConfig{},
+		Categories: map[string]config.CategoryConfig{},
+	}
+
+	st := state.NewState("guild-123")
+	st.SetChannel("", "old-chan", "ch-888")
+
+	live := &LiveState{
+		Roles:      make(map[string]*discord.Role),
+		Categories: make(map[string]*discord.Channel),
+		Channels: map[string]*discord.Channel{
+			"ch-888": {ID: "ch-888", Type: discord.ChannelTypeGuildText, Name: "old-chan"},
+		},
+	}
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceChannel, "/old-chan")
+	if action == nil {
+		t.Fatal("expected delete action for top-level channel '/old-chan'")
+	}
+	if action.Type != ActionDelete {
+		t.Errorf("expected ActionDelete, got %s", action.Type)
+	}
+	if action.DiscordID != "ch-888" {
+		t.Errorf("expected DiscordID 'ch-888', got %q", action.DiscordID)
+	}
+}

@@ -18,8 +18,24 @@ const (
 
 // Guild represents a Discord guild (server).
 type Guild struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID                          string  `json:"id"`
+	Name                        string  `json:"name"`
+	VerificationLevel           int     `json:"verification_level"`
+	ExplicitContentFilter       int     `json:"explicit_content_filter"`
+	DefaultMessageNotifications int     `json:"default_message_notifications"`
+	AFKChannelID                *string `json:"afk_channel_id"`
+	AFKTimeout                  int     `json:"afk_timeout"`
+	SystemChannelID             *string `json:"system_channel_id"`
+}
+
+// ModifyGuildParams contains parameters for modifying a Discord guild (all fields optional).
+type ModifyGuildParams struct {
+	VerificationLevel           *int    `json:"verification_level,omitempty"`
+	ExplicitContentFilter       *int    `json:"explicit_content_filter,omitempty"`
+	DefaultMessageNotifications *int    `json:"default_message_notifications,omitempty"`
+	AFKChannelID                *string `json:"afk_channel_id,omitempty"`
+	AFKTimeout                  *int    `json:"afk_timeout,omitempty"`
+	SystemChannelID             *string `json:"system_channel_id,omitempty"`
 }
 
 // Channel represents a Discord channel or category.
