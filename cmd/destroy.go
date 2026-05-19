@@ -62,8 +62,9 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 
-	// Delete channels first.
-	for key, rs := range st.Channels {
+	// Delete channels first (sorted: channels must go before their parent category).
+	for _, key := range sortedKeys(st.Channels) {
+		rs := st.Channels[key]
 		fmt.Printf("  Deleting channel %q (%s)... ", key, rs.DiscordID)
 		if err := client.DeleteChannel(rs.DiscordID); err != nil {
 			fmt.Printf("error: %v\n", err)
@@ -73,7 +74,8 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Delete categories next.
-	for name, rs := range st.Categories {
+	for _, name := range sortedKeys(st.Categories) {
+		rs := st.Categories[name]
 		fmt.Printf("  Deleting category %q (%s)... ", name, rs.DiscordID)
 		if err := client.DeleteChannel(rs.DiscordID); err != nil {
 			fmt.Printf("error: %v\n", err)
@@ -83,7 +85,8 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Delete roles last.
-	for name, rs := range st.Roles {
+	for _, name := range sortedKeys(st.Roles) {
+		rs := st.Roles[name]
 		fmt.Printf("  Deleting role %q (%s)... ", name, rs.DiscordID)
 		if err := client.DeleteRole(serverID, rs.DiscordID); err != nil {
 			fmt.Printf("error: %v\n", err)

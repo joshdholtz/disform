@@ -29,6 +29,8 @@ func init() {
 	rootCmd.AddCommand(applyCmd)
 	rootCmd.AddCommand(destroyCmd)
 	rootCmd.AddCommand(importCmd)
+	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(driftCmd)
 }
 
 // getToken returns the bot token from flag or environment variable.

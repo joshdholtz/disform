@@ -168,7 +168,8 @@ func buildImportedConfig(serverID string, guild *discord.Guild, channels []*disc
 				continue
 			}
 		}
-		// Channels without a category are skipped (or could be added to a default category).
+		// Channel has no parent category — log it so the user knows.
+		fmt.Printf("  warning: channel %q (id: %s) has no category and was skipped — add it to a category in disform.yml manually\n", ch.Name, ch.ID)
 	}
 
 	// Process roles (skip @everyone which is always position 0).
