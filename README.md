@@ -1,11 +1,12 @@
-# disform
+<div align="center">
 
-<img width="1774" height="887" alt="7086119C-3BBB-41E5-9661-28B8023C2F80" src="https://github.com/user-attachments/assets/a931f000-3159-4001-a2a8-24b987efa44a" />
-
+<img width="1774" height="887" alt="disform — declarative Discord server management" src="https://github.com/user-attachments/assets/a931f000-3159-4001-a2a8-24b987efa44a" />
 
 [![CI](https://github.com/joshdholtz/disform/actions/workflows/ci.yml/badge.svg)](https://github.com/joshdholtz/disform/actions/workflows/ci.yml)
 
 **Declarative Discord server management. Like Terraform, but for Discord.**
+
+</div>
 
 disform reads a YAML config file, compares it against your live server state, and applies only the changes needed — channels, categories, roles, permissions, and guild settings. A state file tracks what disform manages so it never touches resources it didn't create.
 
