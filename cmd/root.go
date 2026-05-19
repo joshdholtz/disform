@@ -48,6 +48,7 @@ func getToken() string {
 
 // Execute runs the root command.
 func Execute() {
+	loadDotEnv(".env")
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
