@@ -232,7 +232,7 @@ disform import --server-id 123456789012345678 --output staging.yml
 
 ### `disform plan`
 
-Show what changes would be made. Reads live Discord state but makes no modifications.
+Show what logical changes would be made. Reads live Discord state but makes no modifications.
 
 ```sh
 disform plan
@@ -246,9 +246,14 @@ disform plan --detailed-exitcode     # exit 2 if changes exist (CI gate)
 
 Compute a plan, prompt for confirmation, then execute all changes. Acquires a lock on the state file to prevent concurrent runs.
 
+If the plan contains deletions, a second confirmation is required — you must type the exact count of resources being deleted. Deleted channels lose all message history and cannot be recovered.
+
 ```sh
 disform apply
 disform apply --auto-approve
+
+# Preview the raw Discord API requests without making any changes:
+disform apply --dry-run
 
 # Apply only specific resources:
 disform apply --target role.admin
@@ -257,6 +262,45 @@ disform apply --target channel.general/welcome
 ```
 
 `--target` can be repeated. Format: `role.<key>`, `category.<key>`, `channel.<categoryKey/channelKey>`.
+
+#### `--dry-run`
+
+Runs the full plan + apply pipeline against a recording client that logs every Discord API call (method, path, JSON body) without sending anything. Useful for auditing exactly what would hit the API — permission bitfields, parent IDs, field values — before committing to an apply.
+
+```
+$ disform apply --dry-run
+
+  + create role "admin"
+  + create channel "General/welcome"
+
+Plan: 2 to add, 0 to change, 0 to destroy.
+
+API requests that would be sent:
+
+  POST /guilds/123456789012345678/roles
+  {
+    "name": "Admin",
+    "color": 15158332,
+    "hoist": true,
+    "mentionable": true,
+    "permissions": "8"
+  }
+
+  POST /guilds/123456789012345678/channels
+  {
+    "name": "General",
+    "type": 4
+  }
+
+  POST /guilds/123456789012345678/channels
+  {
+    "name": "welcome",
+    "type": 0,
+    "parent_id": "<dry-run-id-2>"
+  }
+
+Dry run complete. No changes were made.
+```
 
 ---
 

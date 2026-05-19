@@ -19,8 +19,11 @@ var planJSON bool
 var planCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Show planned changes to Discord server",
-	Long:  "Compares the current config against live Discord state and shows what changes would be applied.",
-	RunE:  runPlan,
+	Long: `Compares the current config against live Discord state and shows what changes would be applied.
+
+To also see the raw Discord API requests that would be sent, run:
+  disform apply --dry-run`,
+	RunE: runPlan,
 }
 
 func init() {
@@ -172,6 +175,9 @@ func printPlan(plan *planner.Plan) {
 		fmt.Println()
 	}
 	fmt.Println(plan.Summary())
+	if plan.HasChanges() {
+		fmt.Println("  Run 'disform apply --dry-run' to preview raw API requests.")
+	}
 
 	if plan.ToDelete > 0 {
 		bold := func(s string) string {
