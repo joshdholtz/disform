@@ -1,0 +1,178 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"sort"
+
+	"github.com/joshholtz/disform/internal/config"
+	"github.com/joshholtz/disform/internal/discord"
+	"github.com/joshholtz/disform/internal/planner"
+	"github.com/joshholtz/disform/internal/state"
+	"github.com/spf13/cobra"
+)
+
+var planCmd = &cobra.Command{
+	Use:   "plan",
+	Short: "Show planned changes to Discord server",
+	Long:  "Compares the current config against live Discord state and shows what changes would be applied.",
+	RunE:  runPlan,
+}
+
+func runPlan(cmd *cobra.Command, args []string) error {
+	tok := getToken()
+	if tok == "" {
+		return fmt.Errorf("Discord bot token is required (set --token or DISCORD_TOKEN env var)")
+	}
+
+	cfg, err := config.LoadConfig(configFile)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	st, err := state.LoadState(stateFile)
+	if err != nil {
+		return fmt.Errorf("loading state: %w", err)
+	}
+
+	client := discord.NewHTTPClient(tok)
+
+	live, err := fetchLiveState(client, cfg.ServerID)
+	if err != nil {
+		return fmt.Errorf("fetching live Discord state: %w", err)
+	}
+
+	p := planner.NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		return fmt.Errorf("computing plan: %w", err)
+	}
+
+	printPlan(plan)
+	return nil
+}
+
+// fetchLiveState fetches current Discord channels and roles into a LiveState.
+func fetchLiveState(client discord.Client, serverID string) (*planner.LiveState, error) {
+	channels, err := client.GetChannels(serverID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching channels: %w", err)
+	}
+
+	roles, err := client.GetRoles(serverID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching roles: %w", err)
+	}
+
+	live := &planner.LiveState{
+		Roles:      make(map[string]*discord.Role),
+		Categories: make(map[string]*discord.Channel),
+		Channels:   make(map[string]*discord.Channel),
+	}
+
+	for _, r := range roles {
+		live.Roles[r.ID] = r
+	}
+
+	for _, ch := range channels {
+		switch ch.Type {
+		case discord.ChannelTypeGuildCategory:
+			live.Categories[ch.ID] = ch
+		default:
+			live.Channels[ch.ID] = ch
+		}
+	}
+
+	return live, nil
+}
+
+// printPlan prints the plan to stdout with ANSI color coding.
+func printPlan(plan *planner.Plan) {
+	useColor := shouldUseColor()
+
+	green := func(s string) string {
+		if useColor {
+			return "\033[32m" + s + "\033[0m"
+		}
+		return s
+	}
+	yellow := func(s string) string {
+		if useColor {
+			return "\033[33m" + s + "\033[0m"
+		}
+		return s
+	}
+	red := func(s string) string {
+		if useColor {
+			return "\033[31m" + s + "\033[0m"
+		}
+		return s
+	}
+
+	// Sort actions for deterministic output.
+	actions := make([]planner.Action, len(plan.Actions))
+	copy(actions, plan.Actions)
+	sort.Slice(actions, func(i, j int) bool {
+		if actions[i].ResourceType != actions[j].ResourceType {
+			return resourceTypeOrder(actions[i].ResourceType) < resourceTypeOrder(actions[j].ResourceType)
+		}
+		return actions[i].Name < actions[j].Name
+	})
+
+	for _, action := range actions {
+		switch action.Type {
+		case planner.ActionCreate:
+			fmt.Printf("  %s %s %q will be created\n",
+				green("+"),
+				action.ResourceType,
+				action.Name,
+			)
+		case planner.ActionUpdate:
+			fmt.Printf("  %s %s %q will be updated\n",
+				yellow("~"),
+				action.ResourceType,
+				action.Name,
+			)
+			for _, change := range action.Changes {
+				fmt.Printf("    %s: %q -> %q\n", change.Field, change.OldValue, change.NewValue)
+			}
+		case planner.ActionDelete:
+			fmt.Printf("  %s %s %q will be deleted\n",
+				red("-"),
+				action.ResourceType,
+				action.Name,
+			)
+		}
+	}
+
+	if plan.HasChanges() {
+		fmt.Println()
+	}
+	fmt.Println(plan.Summary())
+}
+
+func resourceTypeOrder(rt planner.ResourceType) int {
+	switch rt {
+	case planner.ResourceRole:
+		return 0
+	case planner.ResourceCategory:
+		return 1
+	case planner.ResourceChannel:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// shouldUseColor returns true if color output should be used.
+func shouldUseColor() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	// Check if stdout is a terminal (file descriptor 1).
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}

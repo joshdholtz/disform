@@ -1,0 +1,6 @@
+# Missing server_id
+roles:
+  broken:
+    color: "notacolor"
+    permissions:
+      - invalid_permission

@@ -1,0 +1,59 @@
+server_id: "123456789012345678"
+
+roles:
+  admin:
+    color: "#FF0000"
+    hoist: true
+    mentionable: true
+    permissions:
+      - administrator
+  moderator:
+    color: "#FFA500"
+    hoist: true
+    permissions:
+      - kick_members
+      - manage_messages
+      - ban_members
+  member:
+    color: "#00AA00"
+    mentionable: false
+    permissions:
+      - view_channel
+      - send_messages
+      - read_message_history
+
+categories:
+  General:
+    position: 0
+    channels:
+      welcome:
+        type: text
+        topic: "Welcome to the server!"
+        slowmode: 0
+        nsfw: false
+        permissions:
+          "@everyone":
+            deny:
+              - send_messages
+          member:
+            allow:
+              - view_channel
+              - read_message_history
+      general-chat:
+        type: text
+        topic: "General discussion"
+        slowmode: 5
+      announcements:
+        type: announcement
+        topic: "Official announcements only"
+  Voice:
+    position: 1
+    channels:
+      general-voice:
+        type: voice
+        bitrate: 64000
+        user_limit: 0
+      music:
+        type: voice
+        bitrate: 128000
+        user_limit: 10
