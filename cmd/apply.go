@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -118,41 +119,13 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 
 	if !applyAutoApprove {
-		fmt.Print("\nDo you want to apply these changes? (yes/no): ")
-		reader := bufio.NewReader(os.Stdin)
-		answer, err := reader.ReadString('\n')
+		ok, err := confirmApply(os.Stdin, plan)
 		if err != nil {
-			return fmt.Errorf("reading input: %w", err)
+			return err
 		}
-		answer = strings.TrimSpace(strings.ToLower(answer))
-		if answer != "yes" {
+		if !ok {
 			fmt.Println("Apply cancelled.")
 			return nil
-		}
-
-		// Second confirmation for destructive actions.
-		var deletes []planner.Action
-		for _, a := range plan.Actions {
-			if a.Type == planner.ActionDelete {
-				deletes = append(deletes, a)
-			}
-		}
-		if len(deletes) > 0 {
-			fmt.Println()
-			fmt.Println("  The following resources will be permanently deleted:")
-			for _, a := range deletes {
-				fmt.Printf("    - %s %q\n", a.ResourceType, a.Name)
-			}
-			fmt.Printf("\n  Type the number of resources to delete (%d) to confirm: ", len(deletes))
-			answer, err := reader.ReadString('\n')
-			if err != nil {
-				return fmt.Errorf("reading input: %w", err)
-			}
-			answer = strings.TrimSpace(answer)
-			if answer != fmt.Sprintf("%d", len(deletes)) {
-				fmt.Println("Apply cancelled.")
-				return nil
-			}
 		}
 	}
 
@@ -227,4 +200,42 @@ func filterPlan(plan *planner.Plan, targets []string) (*planner.Plan, error) {
 		}
 	}
 	return filtered, nil
+}
+
+// confirmApply prompts the user to confirm the apply. If the plan contains
+// deletes, a second prompt requires typing the exact count of deletions.
+// Returns true if the user confirmed, false if they cancelled.
+func confirmApply(r io.Reader, plan *planner.Plan) (bool, error) {
+	reader := bufio.NewReader(r)
+
+	fmt.Print("\nDo you want to apply these changes? (yes/no): ")
+	answer, err := reader.ReadString('\n')
+	if err != nil {
+		return false, fmt.Errorf("reading input: %w", err)
+	}
+	if strings.TrimSpace(strings.ToLower(answer)) != "yes" {
+		return false, nil
+	}
+
+	var deletes []planner.Action
+	for _, a := range plan.Actions {
+		if a.Type == planner.ActionDelete {
+			deletes = append(deletes, a)
+		}
+	}
+	if len(deletes) == 0 {
+		return true, nil
+	}
+
+	fmt.Println()
+	fmt.Println("  The following resources will be permanently deleted:")
+	for _, a := range deletes {
+		fmt.Printf("    - %s %q\n", a.ResourceType, a.Name)
+	}
+	fmt.Printf("\n  Type the number of resources to delete (%d) to confirm: ", len(deletes))
+	answer, err = reader.ReadString('\n')
+	if err != nil {
+		return false, fmt.Errorf("reading input: %w", err)
+	}
+	return strings.TrimSpace(answer) == fmt.Sprintf("%d", len(deletes)), nil
 }

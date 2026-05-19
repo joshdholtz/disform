@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 
@@ -114,6 +115,11 @@ func fetchLiveState(client discord.Client, serverID string) (*planner.LiveState,
 
 // printPlan prints the plan to stdout with ANSI color coding.
 func printPlan(plan *planner.Plan) {
+	printPlanTo(os.Stdout, plan)
+}
+
+// printPlanTo writes the plan output to w. Separated from printPlan for testability.
+func printPlanTo(w io.Writer, plan *planner.Plan) {
 	useColor := shouldUseColor()
 
 	green := func(s string) string {
@@ -148,22 +154,22 @@ func printPlan(plan *planner.Plan) {
 	for _, action := range actions {
 		switch action.Type {
 		case planner.ActionCreate:
-			fmt.Printf("  %s %s %q will be created\n",
+			fmt.Fprintf(w, "  %s %s %q will be created\n",
 				green("+"),
 				action.ResourceType,
 				action.Name,
 			)
 		case planner.ActionUpdate:
-			fmt.Printf("  %s %s %q will be updated\n",
+			fmt.Fprintf(w, "  %s %s %q will be updated\n",
 				yellow("~"),
 				action.ResourceType,
 				action.Name,
 			)
 			for _, change := range action.Changes {
-				fmt.Printf("    %s: %q -> %q\n", change.Field, change.OldValue, change.NewValue)
+				fmt.Fprintf(w, "    %s: %q -> %q\n", change.Field, change.OldValue, change.NewValue)
 			}
 		case planner.ActionDelete:
-			fmt.Printf("  %s %s %q will be deleted\n",
+			fmt.Fprintf(w, "  %s %s %q will be deleted\n",
 				red("-"),
 				action.ResourceType,
 				action.Name,
@@ -172,11 +178,11 @@ func printPlan(plan *planner.Plan) {
 	}
 
 	if plan.HasChanges() {
-		fmt.Println()
+		fmt.Fprintln(w)
 	}
-	fmt.Println(plan.Summary())
+	fmt.Fprintln(w, plan.Summary())
 	if plan.HasChanges() {
-		fmt.Println("  Run 'disform apply --dry-run' to preview raw API requests.")
+		fmt.Fprintln(w, "  Run 'disform apply --dry-run' to preview raw API requests.")
 	}
 
 	if plan.ToDelete > 0 {
@@ -186,9 +192,9 @@ func printPlan(plan *planner.Plan) {
 			}
 			return s
 		}
-		fmt.Println()
-		fmt.Println(red(bold("  ⚠ Warning: destructive actions above will permanently delete Discord resources.")))
-		fmt.Println(red("  Deleted channels lose all message history. This cannot be undone."))
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, red(bold("  ⚠ Warning: destructive actions above will permanently delete Discord resources.")))
+		fmt.Fprintln(w, red("  Deleted channels lose all message history. This cannot be undone."))
 	}
 }
 

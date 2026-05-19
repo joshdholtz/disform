@@ -26,7 +26,12 @@ state, and applies changes via the Discord API.
 disform init --server-id <id>   Create a starter disform.yml
 disform import --server-id <id> Import live server → disform.yml + state file
 disform plan                    Show what changes would be applied (no changes made)
+disform plan --json             Machine-readable JSON plan output
+disform plan --detailed-exitcode  Exit 2 when changes exist (CI gate)
 disform apply                   Apply config changes to Discord
+disform apply --dry-run         Preview raw Discord API requests without making changes
+disform apply --auto-approve    Skip confirmation prompts (for CI)
+disform apply --target role.NAME  Apply only a specific resource
 disform destroy                 Delete all managed resources from Discord
 disform validate                Validate config file without hitting Discord
 disform drift                   Show resources changed outside of disform
