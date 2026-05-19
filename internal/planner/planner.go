@@ -185,7 +185,8 @@ func (p *Planner) planRoles(plan *Plan) error {
 		}
 
 		// Compare fields.
-		changes, err := compareRole(name, roleCfg, liveRole)
+		displayName := config.DisplayName(name, roleCfg.Name)
+		changes, err := compareRole(name, displayName, roleCfg, liveRole)
 		if err != nil {
 			return fmt.Errorf("comparing role %q: %w", name, err)
 		}
@@ -247,7 +248,8 @@ func (p *Planner) planCategories(plan *Plan) error {
 			continue
 		}
 
-		changes := compareCategory(name, catCfg, liveCategory)
+		displayName := config.DisplayName(name, catCfg.Name)
+		changes := compareCategory(name, displayName, catCfg, liveCategory)
 		if len(changes) > 0 {
 			p.addAction(plan, Action{
 				Type:         ActionUpdate,
@@ -307,7 +309,8 @@ func (p *Planner) planChannels(plan *Plan) error {
 				continue
 			}
 
-			changes, err := compareChannel(chanCfg, liveChannel)
+			displayName := config.DisplayName(chanName, chanCfg.Name)
+			changes, err := compareChannel(displayName, chanCfg, liveChannel)
 			if err != nil {
 				return fmt.Errorf("comparing channel %q/%q: %w", catName, chanName, err)
 			}
@@ -389,7 +392,8 @@ func (p *Planner) planTopLevelChannels(plan *Plan) error {
 			continue
 		}
 
-		changes, err := compareChannel(chanCfg, liveChannel)
+		displayName := config.DisplayName(chanName, chanCfg.Name)
+		changes, err := compareChannel(displayName, chanCfg, liveChannel)
 		if err != nil {
 			return fmt.Errorf("comparing top-level channel %q: %w", chanName, err)
 		}
@@ -547,8 +551,18 @@ func (p *Planner) resolveChannelNameToID(chanName string) string {
 }
 
 // compareRole returns a list of field changes between the config and live role.
-func compareRole(name string, cfg config.RoleConfig, live *discord.Role) ([]FieldChange, error) {
+// name is the YAML key (used for error messages); displayName is the Discord display name.
+func compareRole(name, displayName string, cfg config.RoleConfig, live *discord.Role) ([]FieldChange, error) {
 	var changes []FieldChange
+
+	// Name
+	if displayName != live.Name {
+		changes = append(changes, FieldChange{
+			Field:    "name",
+			OldValue: live.Name,
+			NewValue: displayName,
+		})
+	}
 
 	// Color
 	if cfg.Color != "" {
@@ -601,8 +615,18 @@ func compareRole(name string, cfg config.RoleConfig, live *discord.Role) ([]Fiel
 }
 
 // compareCategory returns field changes between the config and live category.
-func compareCategory(name string, cfg config.CategoryConfig, live *discord.Channel) []FieldChange {
+// name is the YAML key (used for error messages); displayName is the Discord display name.
+func compareCategory(name, displayName string, cfg config.CategoryConfig, live *discord.Channel) []FieldChange {
 	var changes []FieldChange
+
+	// Name
+	if displayName != live.Name {
+		changes = append(changes, FieldChange{
+			Field:    "name",
+			OldValue: live.Name,
+			NewValue: displayName,
+		})
+	}
 
 	if cfg.Position != live.Position {
 		changes = append(changes, FieldChange{
@@ -616,8 +640,18 @@ func compareCategory(name string, cfg config.CategoryConfig, live *discord.Chann
 }
 
 // compareChannel returns field changes between the config and live channel.
-func compareChannel(cfg config.ChannelConfig, live *discord.Channel) ([]FieldChange, error) {
+// displayName is the Discord display name for the channel.
+func compareChannel(displayName string, cfg config.ChannelConfig, live *discord.Channel) ([]FieldChange, error) {
 	var changes []FieldChange
+
+	// Name
+	if displayName != live.Name {
+		changes = append(changes, FieldChange{
+			Field:    "name",
+			OldValue: live.Name,
+			NewValue: displayName,
+		})
+	}
 
 	// Type
 	if cfg.Type != "" {

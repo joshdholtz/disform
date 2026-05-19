@@ -65,10 +65,12 @@ roles:
     hoist: true
 
 categories:
-  General:
+  general-cat:                         # stable key (used in state file, never changes)
+    name: "General"                    # optional Discord display name; defaults to key
     position: 0
     channels:
-      welcome:
+      welcome-chan:                     # stable key
+        name: "welcome"               # optional Discord display name; defaults to key
         type: text                     # text | voice | announcement | forum | stage
         topic: "Welcome to the server!"
         nsfw: false

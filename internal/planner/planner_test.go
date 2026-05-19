@@ -1491,3 +1491,161 @@ func TestPlanDeleteTopLevelChannel(t *testing.T) {
 		t.Errorf("expected DiscordID 'ch-888', got %q", action.DiscordID)
 	}
 }
+
+// TestPlanUpdateRoleDisplayName verifies a name field change is detected when
+// the config key differs from the Discord display name set via the name: field.
+func TestPlanUpdateRoleDisplayName(t *testing.T) {
+	cfg := &config.Config{
+		ServerID: "123",
+		Roles: map[string]config.RoleConfig{
+			"admin-role": {Name: "Admin", Permissions: []string{}},
+		},
+		Categories: map[string]config.CategoryConfig{},
+	}
+
+	st := state.NewState("123")
+	st.SetRole("admin-role", "role-111")
+
+	live := buildLiveState(
+		[]*discord.Role{
+			// Live Discord still shows the old name "admin" before the rename.
+			{ID: "role-111", Name: "admin", Permissions: "0"},
+		},
+		nil, nil,
+	)
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceRole, "admin-role")
+	if action == nil || action.Type != ActionUpdate {
+		t.Fatal("expected update action for role 'admin-role'")
+	}
+	change := findFieldChange(action.Changes, "name")
+	if change == nil {
+		t.Fatal("expected 'name' field change")
+	}
+	if change.OldValue != "admin" || change.NewValue != "Admin" {
+		t.Errorf("expected name change 'admin'->'Admin', got %q->%q", change.OldValue, change.NewValue)
+	}
+}
+
+// TestPlanUpdateCategoryDisplayName verifies a name field change is detected for categories.
+func TestPlanUpdateCategoryDisplayName(t *testing.T) {
+	cfg := &config.Config{
+		ServerID: "123",
+		Roles:    map[string]config.RoleConfig{},
+		Categories: map[string]config.CategoryConfig{
+			"general-cat": {Name: "General", Position: 0, Channels: map[string]config.ChannelConfig{}},
+		},
+	}
+
+	st := state.NewState("123")
+	st.SetCategory("general-cat", "cat-111")
+
+	live := buildLiveState(
+		nil,
+		[]*discord.Channel{
+			{ID: "cat-111", Type: discord.ChannelTypeGuildCategory, Name: "general-cat", Position: 0},
+		},
+		nil,
+	)
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceCategory, "general-cat")
+	if action == nil || action.Type != ActionUpdate {
+		t.Fatal("expected update action for category 'general-cat'")
+	}
+	change := findFieldChange(action.Changes, "name")
+	if change == nil {
+		t.Fatal("expected 'name' field change")
+	}
+	if change.OldValue != "general-cat" || change.NewValue != "General" {
+		t.Errorf("expected name change 'general-cat'->'General', got %q->%q", change.OldValue, change.NewValue)
+	}
+}
+
+// TestPlanUpdateChannelDisplayName verifies a name field change is detected for channels.
+func TestPlanUpdateChannelDisplayName(t *testing.T) {
+	cfg := &config.Config{
+		ServerID: "123",
+		Roles:    map[string]config.RoleConfig{},
+		Categories: map[string]config.CategoryConfig{
+			"General": {
+				Channels: map[string]config.ChannelConfig{
+					"welcome-chan": {Name: "welcome", Type: "text"},
+				},
+			},
+		},
+	}
+
+	st := state.NewState("123")
+	st.SetCategory("General", "cat-111")
+	st.SetChannel("General", "welcome-chan", "ch-222")
+
+	live := buildLiveState(
+		nil,
+		[]*discord.Channel{{ID: "cat-111", Type: discord.ChannelTypeGuildCategory, Name: "General"}},
+		[]*discord.Channel{
+			{ID: "ch-222", Type: discord.ChannelTypeGuildText, Name: "welcome-chan"},
+		},
+	)
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	action := findAction(plan, ResourceChannel, "General/welcome-chan")
+	if action == nil || action.Type != ActionUpdate {
+		t.Fatal("expected update action for channel 'General/welcome-chan'")
+	}
+	change := findFieldChange(action.Changes, "name")
+	if change == nil {
+		t.Fatal("expected 'name' field change")
+	}
+	if change.OldValue != "welcome-chan" || change.NewValue != "welcome" {
+		t.Errorf("expected name change 'welcome-chan'->'welcome', got %q->%q", change.OldValue, change.NewValue)
+	}
+}
+
+// TestPlanNoChangeWhenDisplayNameMatchesKey verifies backward compatibility:
+// if name: is omitted the YAML key is compared to the live name and no spurious change is emitted.
+func TestPlanNoChangeWhenDisplayNameMatchesKey(t *testing.T) {
+	cfg := &config.Config{
+		ServerID: "123",
+		Roles: map[string]config.RoleConfig{
+			"Admin": {Permissions: []string{}}, // no Name field — key IS the display name
+		},
+		Categories: map[string]config.CategoryConfig{},
+	}
+
+	st := state.NewState("123")
+	st.SetRole("Admin", "role-111")
+
+	live := buildLiveState(
+		[]*discord.Role{
+			{ID: "role-111", Name: "Admin", Permissions: "0"},
+		},
+		nil, nil,
+	)
+
+	p := NewPlanner(cfg, st, live)
+	plan, err := p.Plan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if plan.HasChanges() {
+		t.Errorf("expected no changes when key matches live name, got: %v", plan.Actions)
+	}
+}

@@ -82,6 +82,7 @@ type ServerSettings struct {
 
 // RoleConfig defines a Discord role.
 type RoleConfig struct {
+	Name        string   `yaml:"name,omitempty"`
 	Color       string   `yaml:"color"`
 	Hoist       bool     `yaml:"hoist"`
 	Mentionable bool     `yaml:"mentionable"`
@@ -90,12 +91,14 @@ type RoleConfig struct {
 
 // CategoryConfig defines a Discord channel category.
 type CategoryConfig struct {
+	Name     string                   `yaml:"name,omitempty"`
 	Position int                      `yaml:"position"`
 	Channels map[string]ChannelConfig `yaml:"channels"`
 }
 
 // ChannelConfig defines a Discord channel.
 type ChannelConfig struct {
+	Name        string                               `yaml:"name,omitempty"`
 	Type        string                               `yaml:"type"`
 	Topic       string                               `yaml:"topic"`
 	Position    int                                  `yaml:"position"`
@@ -104,6 +107,15 @@ type ChannelConfig struct {
 	Bitrate     int                                  `yaml:"bitrate"`
 	UserLimit   int                                  `yaml:"user_limit"`
 	Permissions map[string]PermissionOverwriteConfig `yaml:"permissions"`
+}
+
+// DisplayName returns the Discord display name for a resource.
+// If name is non-empty it is used; otherwise the YAML key is the display name.
+func DisplayName(key, name string) string {
+	if name != "" {
+		return name
+	}
+	return key
 }
 
 // PermissionOverwriteConfig defines allow/deny permission overwrites for a role or member.

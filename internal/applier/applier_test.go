@@ -1071,3 +1071,217 @@ func TestApplyDeleteTopLevelChannel(t *testing.T) {
 		t.Error("expected top-level channel removed from state")
 	}
 }
+
+// TestApplyCreateRoleWithDisplayName verifies that CreateRole uses the name: field
+// as the Discord display name rather than the YAML key.
+func TestApplyCreateRoleWithDisplayName(t *testing.T) {
+	client := newMockClient()
+	st := state.NewState("server-123")
+	cfg := makeConfig("server-123", map[string]config.RoleConfig{
+		"admin-role": {Name: "Admin", Color: "#FF0000", Permissions: []string{}},
+	}, nil)
+
+	a := NewApplier(client, st, cfg)
+	action := planner.Action{
+		Type:         planner.ActionCreate,
+		ResourceType: planner.ResourceRole,
+		Name:         "admin-role",
+	}
+
+	if err := a.ApplyAction(action); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.createRoleCalls) != 1 {
+		t.Fatalf("expected 1 CreateRole call, got %d", len(client.createRoleCalls))
+	}
+	call := client.createRoleCalls[0]
+	// Discord should receive the display name "Admin", not the YAML key "admin-role".
+	if call.Params.Name != "Admin" {
+		t.Errorf("expected role display name 'Admin', got %q", call.Params.Name)
+	}
+	// State key should remain the YAML key.
+	id, ok := st.GetRoleID("admin-role")
+	if !ok || id == "" {
+		t.Error("expected role 'admin-role' recorded in state by YAML key")
+	}
+}
+
+// TestApplyUpdateRoleName verifies that a "name" field change updates the role name on Discord.
+func TestApplyUpdateRoleName(t *testing.T) {
+	client := newMockClient()
+	st := state.NewState("server-123")
+	st.SetRole("admin-role", "role-111")
+	cfg := makeConfig("server-123", map[string]config.RoleConfig{
+		"admin-role": {Name: "Admin"},
+	}, nil)
+
+	a := NewApplier(client, st, cfg)
+	action := planner.Action{
+		Type:         planner.ActionUpdate,
+		ResourceType: planner.ResourceRole,
+		Name:         "admin-role",
+		DiscordID:    "role-111",
+		Changes: []planner.FieldChange{
+			{Field: "name", OldValue: "admin-role", NewValue: "Admin"},
+		},
+	}
+
+	if err := a.ApplyAction(action); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.updateRoleCalls) != 1 {
+		t.Fatalf("expected 1 UpdateRole call, got %d", len(client.updateRoleCalls))
+	}
+	call := client.updateRoleCalls[0]
+	if call.Params.Name == nil || *call.Params.Name != "Admin" {
+		t.Errorf("expected Name='Admin', got %v", call.Params.Name)
+	}
+}
+
+// TestApplyCreateCategoryWithDisplayName verifies that CreateChannel uses the name: field
+// as the Discord display name rather than the YAML key.
+func TestApplyCreateCategoryWithDisplayName(t *testing.T) {
+	client := newMockClient()
+	st := state.NewState("server-123")
+	cfg := makeConfig("server-123", nil, map[string]config.CategoryConfig{
+		"general-cat": {Name: "General", Position: 1},
+	})
+
+	a := NewApplier(client, st, cfg)
+	action := planner.Action{
+		Type:         planner.ActionCreate,
+		ResourceType: planner.ResourceCategory,
+		Name:         "general-cat",
+	}
+
+	if err := a.ApplyAction(action); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.createChannelCalls) != 1 {
+		t.Fatalf("expected 1 CreateChannel call, got %d", len(client.createChannelCalls))
+	}
+	call := client.createChannelCalls[0]
+	// Discord should receive "General", not "general-cat".
+	if call.Params.Name != "General" {
+		t.Errorf("expected category display name 'General', got %q", call.Params.Name)
+	}
+	// State key should remain the YAML key.
+	id, ok := st.GetCategoryID("general-cat")
+	if !ok || id == "" {
+		t.Error("expected category 'general-cat' recorded in state by YAML key")
+	}
+}
+
+// TestApplyUpdateCategoryName verifies that a "name" field change updates the category name on Discord.
+func TestApplyUpdateCategoryName(t *testing.T) {
+	client := newMockClient()
+	st := state.NewState("server-123")
+	st.SetCategory("general-cat", "cat-111")
+	cfg := makeConfig("server-123", nil, map[string]config.CategoryConfig{
+		"general-cat": {Name: "General"},
+	})
+
+	a := NewApplier(client, st, cfg)
+	action := planner.Action{
+		Type:         planner.ActionUpdate,
+		ResourceType: planner.ResourceCategory,
+		Name:         "general-cat",
+		DiscordID:    "cat-111",
+		Changes: []planner.FieldChange{
+			{Field: "name", OldValue: "general-cat", NewValue: "General"},
+		},
+	}
+
+	if err := a.ApplyAction(action); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.updateChannelCalls) != 1 {
+		t.Fatalf("expected 1 UpdateChannel call, got %d", len(client.updateChannelCalls))
+	}
+	call := client.updateChannelCalls[0]
+	if call.Params.Name == nil || *call.Params.Name != "General" {
+		t.Errorf("expected Name='General', got %v", call.Params.Name)
+	}
+}
+
+// TestApplyCreateChannelWithDisplayName verifies that CreateChannel uses the name: field
+// as the Discord display name rather than the YAML key.
+func TestApplyCreateChannelWithDisplayName(t *testing.T) {
+	client := newMockClient()
+	st := state.NewState("server-123")
+	st.SetCategory("General", "cat-111")
+	cfg := makeConfig("server-123", nil, map[string]config.CategoryConfig{
+		"General": {
+			Channels: map[string]config.ChannelConfig{
+				"welcome-chan": {Name: "welcome", Type: "text"},
+			},
+		},
+	})
+
+	a := NewApplier(client, st, cfg)
+	action := planner.Action{
+		Type:         planner.ActionCreate,
+		ResourceType: planner.ResourceChannel,
+		Name:         "General/welcome-chan",
+	}
+
+	if err := a.ApplyAction(action); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.createChannelCalls) != 1 {
+		t.Fatalf("expected 1 CreateChannel call, got %d", len(client.createChannelCalls))
+	}
+	call := client.createChannelCalls[0]
+	// Discord should receive "welcome", not "welcome-chan".
+	if call.Params.Name != "welcome" {
+		t.Errorf("expected channel display name 'welcome', got %q", call.Params.Name)
+	}
+	// State key should remain the YAML key.
+	id, ok := st.GetChannelID("General", "welcome-chan")
+	if !ok || id == "" {
+		t.Error("expected channel 'welcome-chan' recorded in state by YAML key")
+	}
+}
+
+// TestApplyUpdateChannelName verifies that a "name" field change updates the channel name on Discord.
+func TestApplyUpdateChannelName(t *testing.T) {
+	client := newMockClient()
+	st := state.NewState("server-123")
+	st.SetCategory("General", "cat-111")
+	st.SetChannel("General", "welcome-chan", "ch-222")
+	cfg := makeConfig("server-123", nil, map[string]config.CategoryConfig{
+		"General": {
+			Channels: map[string]config.ChannelConfig{
+				"welcome-chan": {Name: "welcome", Type: "text"},
+			},
+		},
+	})
+
+	a := NewApplier(client, st, cfg)
+	action := planner.Action{
+		Type:         planner.ActionUpdate,
+		ResourceType: planner.ResourceChannel,
+		Name:         "General/welcome-chan",
+		DiscordID:    "ch-222",
+		Changes: []planner.FieldChange{
+			{Field: "name", OldValue: "welcome-chan", NewValue: "welcome"},
+		},
+	}
+
+	if err := a.ApplyAction(action); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.updateChannelCalls) != 1 {
+		t.Fatalf("expected 1 UpdateChannel call, got %d", len(client.updateChannelCalls))
+	}
+	call := client.updateChannelCalls[0]
+	if call.Params.Name == nil || *call.Params.Name != "welcome" {
+		t.Errorf("expected Name='welcome', got %v", call.Params.Name)
+	}
+}

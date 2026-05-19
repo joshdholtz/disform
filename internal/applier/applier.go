@@ -140,8 +140,9 @@ func (a *Applier) applyCreateRole(action planner.Action) error {
 		return fmt.Errorf("invalid permissions for role %q: %w", action.Name, err)
 	}
 
+	displayName := config.DisplayName(action.Name, roleCfg.Name)
 	params := discord.CreateRoleParams{
-		Name:        action.Name,
+		Name:        displayName,
 		Permissions: strconv.FormatInt(perms, 10),
 		Color:       color,
 		Hoist:       roleCfg.Hoist,
@@ -163,6 +164,9 @@ func (a *Applier) applyUpdateRole(action planner.Action) error {
 
 	for _, change := range action.Changes {
 		switch change.Field {
+		case "name":
+			v := change.NewValue
+			params.Name = &v
 		case "color":
 			color, err := config.ColorToInt(change.NewValue)
 			if err != nil {
@@ -203,8 +207,9 @@ func (a *Applier) applyCreateCategory(action planner.Action) error {
 		return fmt.Errorf("category %q not found in config", action.Name)
 	}
 
+	displayName := config.DisplayName(action.Name, catCfg.Name)
 	params := discord.CreateChannelParams{
-		Name:     action.Name,
+		Name:     displayName,
 		Type:     discord.ChannelTypeGuildCategory,
 		Position: catCfg.Position,
 	}
@@ -224,6 +229,9 @@ func (a *Applier) applyUpdateCategory(action planner.Action) error {
 
 	for _, change := range action.Changes {
 		switch change.Field {
+		case "name":
+			v := change.NewValue
+			params.Name = &v
 		case "position":
 			pos, err := strconv.Atoi(change.NewValue)
 			if err != nil {
@@ -279,6 +287,7 @@ func (a *Applier) applyCreateChannel(action planner.Action) error {
 		parentID, _ = a.state.GetCategoryID(catName)
 	}
 
+	chanDisplayName := config.DisplayName(chanName, chanCfg.Name)
 	chanType := channelTypeToInt(chanCfg.Type)
 
 	overwrites, err := a.resolvePermissionOverwrites(chanCfg.Permissions)
@@ -287,7 +296,7 @@ func (a *Applier) applyCreateChannel(action planner.Action) error {
 	}
 
 	params := discord.CreateChannelParams{
-		Name:                 chanName,
+		Name:                 chanDisplayName,
 		Type:                 chanType,
 		Topic:                chanCfg.Topic,
 		NSFW:                 chanCfg.NSFW,
@@ -318,6 +327,9 @@ func (a *Applier) applyUpdateChannel(action planner.Action) error {
 
 	for _, change := range action.Changes {
 		switch change.Field {
+		case "name":
+			v := change.NewValue
+			params.Name = &v
 		case "topic":
 			v := change.NewValue
 			params.Topic = &v
