@@ -90,6 +90,31 @@ func runApply(cmd *cobra.Command, args []string) error {
 			fmt.Println("Apply cancelled.")
 			return nil
 		}
+
+		// Second confirmation for destructive actions.
+		var deletes []planner.Action
+		for _, a := range plan.Actions {
+			if a.Type == planner.ActionDelete {
+				deletes = append(deletes, a)
+			}
+		}
+		if len(deletes) > 0 {
+			fmt.Println()
+			fmt.Println("  The following resources will be permanently deleted:")
+			for _, a := range deletes {
+				fmt.Printf("    - %s %q\n", a.ResourceType, a.Name)
+			}
+			fmt.Printf("\n  Type the number of resources to delete (%d) to confirm: ", len(deletes))
+			answer, err := reader.ReadString('\n')
+			if err != nil {
+				return fmt.Errorf("reading input: %w", err)
+			}
+			answer = strings.TrimSpace(answer)
+			if answer != fmt.Sprintf("%d", len(deletes)) {
+				fmt.Println("Apply cancelled.")
+				return nil
+			}
+		}
 	}
 
 	fmt.Println()

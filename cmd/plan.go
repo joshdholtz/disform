@@ -172,6 +172,18 @@ func printPlan(plan *planner.Plan) {
 		fmt.Println()
 	}
 	fmt.Println(plan.Summary())
+
+	if plan.ToDelete > 0 {
+		bold := func(s string) string {
+			if useColor {
+				return "\033[1m" + s + "\033[0m"
+			}
+			return s
+		}
+		fmt.Println()
+		fmt.Println(red(bold("  ⚠ Warning: destructive actions above will permanently delete Discord resources.")))
+		fmt.Println(red("  Deleted channels lose all message history. This cannot be undone."))
+	}
 }
 
 type planJSONOutput struct {
