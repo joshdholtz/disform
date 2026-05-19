@@ -196,7 +196,7 @@ func buildImportedConfig(serverID string, guild *discord.Guild, channels []*disc
 			// Import @everyone permissions if non-zero.
 			if r.Permissions != "" && r.Permissions != "0" {
 				permsInt := int64(0)
-				fmt.Sscanf(r.Permissions, "%d", &permsInt)
+				_, _ = fmt.Sscanf(r.Permissions, "%d", &permsInt)
 				permNames := permissionsToNames(permsInt)
 				if len(permNames) > 0 {
 					cfg.Roles["@everyone"] = importRoleConfig{
