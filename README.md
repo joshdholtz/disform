@@ -1,5 +1,8 @@
 # disform
 
+<img width="1774" height="887" alt="7086119C-3BBB-41E5-9661-28B8023C2F80" src="https://github.com/user-attachments/assets/a931f000-3159-4001-a2a8-24b987efa44a" />
+
+
 [![CI](https://github.com/joshdholtz/disform/actions/workflows/ci.yml/badge.svg)](https://github.com/joshdholtz/disform/actions/workflows/ci.yml)
 
 **Declarative Discord server management. Like Terraform, but for Discord.**
