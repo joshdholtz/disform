@@ -11,11 +11,6 @@ linters:
     - unconvert
     - misspell
     - gofmt
-    - goimports
-
-linters-settings:
-  goimports:
-    local-prefixes: github.com/joshholtz/disform
 
 issues:
   exclude-rules:

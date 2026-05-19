@@ -24,7 +24,7 @@ var importCmd = &cobra.Command{
 func init() {
 	importCmd.Flags().StringVarP(&importOutput, "output", "o", "disform.yml", "Output config file path")
 	importCmd.Flags().StringVar(&importServerID, "server-id", "", "Discord server ID to import (required)")
-	importCmd.MarkFlagRequired("server-id")
+	_ = importCmd.MarkFlagRequired("server-id")
 }
 
 func runImport(cmd *cobra.Command, args []string) error {

@@ -158,10 +158,6 @@ func makeConfig(serverID string, roles map[string]config.RoleConfig, cats map[st
 	}
 }
 
-func strPtr(s string) *string { return &s }
-func intPtr(i int) *int       { return &i }
-func boolPtr(b bool) *bool    { return &b }
-
 // --- Tests ---
 
 func TestApplyCreateRole(t *testing.T) {

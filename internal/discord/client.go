@@ -2,6 +2,7 @@ package discord
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,7 +84,7 @@ func (c *HTTPClient) doWithBody(method, path string, body io.Reader) ([]byte, in
 			reqBody = bytes.NewReader(bodyBytes)
 		}
 
-		req, err := http.NewRequest(method, url, reqBody)
+		req, err := http.NewRequestWithContext(context.Background(), method, url, reqBody)
 		if err != nil {
 			return nil, 0, fmt.Errorf("creating request: %w", err)
 		}

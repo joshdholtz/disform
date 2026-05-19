@@ -11,10 +11,6 @@ import (
 
 // helpers
 
-func strPtr(s string) *string { return &s }
-func intPtr(i int) *int       { return &i }
-func boolPtr(b bool) *bool    { return &b }
-
 func buildLiveState(roles []*discord.Role, categories []*discord.Channel, channels []*discord.Channel) *LiveState {
 	ls := &LiveState{
 		Roles:      make(map[string]*discord.Role),
