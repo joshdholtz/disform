@@ -15,6 +15,7 @@ import (
 )
 
 var applyAutoApprove bool
+var applyDryRun bool
 var applyTargets []string
 
 var applyCmd = &cobra.Command{
@@ -26,6 +27,7 @@ var applyCmd = &cobra.Command{
 
 func init() {
 	applyCmd.Flags().BoolVar(&applyAutoApprove, "auto-approve", false, "Skip confirmation prompt")
+	applyCmd.Flags().BoolVar(&applyDryRun, "dry-run", false, "Show API requests that would be sent without making any changes")
 	applyCmd.Flags().StringArrayVar(&applyTargets, "target", nil, "Apply only specific resources, e.g. --target role.admin --target channel.General/welcome")
 }
 
@@ -43,6 +45,43 @@ func runApply(cmd *cobra.Command, args []string) error {
 	st, err := state.LoadState(stateFile)
 	if err != nil {
 		return fmt.Errorf("loading state: %w", err)
+	}
+
+	// Dry run: use a recording client against live state, skip lock and state save.
+	if applyDryRun {
+		client := discord.NewHTTPClient(tok)
+		live, err := fetchLiveState(client, cfg.ServerID)
+		if err != nil {
+			return fmt.Errorf("fetching live Discord state: %w", err)
+		}
+		p := planner.NewPlanner(cfg, st, live)
+		plan, err := p.Plan()
+		if err != nil {
+			return fmt.Errorf("computing plan: %w", err)
+		}
+		if len(applyTargets) > 0 {
+			plan, err = filterPlan(plan, applyTargets)
+			if err != nil {
+				return err
+			}
+		}
+		printPlan(plan)
+		if !plan.HasChanges() {
+			fmt.Println("No changes — no API calls would be made.")
+			return nil
+		}
+		rec := newDryRunClient(cfg.ServerID)
+		a := applier.NewApplier(rec, st, cfg)
+		for _, action := range plan.Actions {
+			if err := a.ApplyAction(action); err != nil {
+				return fmt.Errorf("dry-run action %s %q: %w", action.Type, action.Name, err)
+			}
+		}
+		fmt.Println("\nAPI requests that would be sent:")
+		fmt.Println()
+		rec.PrintRecords()
+		fmt.Println("Dry run complete. No changes were made.")
+		return nil
 	}
 
 	lock, err := state.AcquireLock(stateFile)
