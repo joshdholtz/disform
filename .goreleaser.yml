@@ -32,6 +32,20 @@ archives:
       - README.md
       - LICENSE
 
+brews:
+  - name: disform
+    repository:
+      owner: joshdholtz
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/joshdholtz/disform"
+    description: "Declarative Discord server management. Like Terraform, but for Discord."
+    license: "MIT"
+    install: |
+      bin.install "disform"
+    test: |
+      system "#{bin}/disform version"
+
 checksum:
   name_template: checksums.txt
 

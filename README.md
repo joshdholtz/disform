@@ -50,19 +50,27 @@ Plan: 1 to add, 1 to change, 1 to destroy.
 
 ## Install
 
-**Requires Go 1.21+**
+**Homebrew (macOS/Linux):**
+
+```sh
+brew install joshdholtz/tap/disform
+```
+
+**Go install:**
 
 ```sh
 go install github.com/joshdholtz/disform@latest
 ```
 
-Or build from source:
+**Build from source:**
 
 ```sh
 git clone https://github.com/joshdholtz/disform
 cd disform
 go build -o disform .
 ```
+
+Or download a pre-built binary for your platform from [Releases](https://github.com/joshdholtz/disform/releases).
 
 Verify:
 
