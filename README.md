@@ -227,27 +227,40 @@ permissions:
 
 ## Commands
 
+### `disform init`
+
+Writes a starter `disform.yml` template.
+
+```sh
+disform init
+disform init --server-id 123456789012345678
+disform init --force   # overwrite existing file
+```
+
 ### `disform plan`
 
 Fetches the live Discord state and shows what would change. Does not modify anything.
 
 ```sh
 disform plan
-disform plan --config staging.yml --state staging.state.json
+disform plan --json                  # machine-readable output for scripting
+disform plan --detailed-exitcode     # exit 2 when changes exist (CI gate)
 ```
 
 ### `disform apply`
 
-Runs `plan`, prompts for confirmation, then executes all changes. State is saved after each successful action, so a partial failure leaves the state consistent.
+Runs `plan`, prompts for confirmation, then executes all changes. Acquires a lock on the state file to prevent concurrent runs. State is saved after each successful action so a partial failure is recoverable.
 
 ```sh
 disform apply
-disform apply --auto-approve   # skip confirmation (useful in CI)
+disform apply --auto-approve                    # skip confirmation
+disform apply --target role.admin               # apply only one resource
+disform apply --target channel.General/welcome  # channel targets use Category/name
 ```
 
 ### `disform destroy`
 
-Deletes every resource tracked in the state file. Prompts for confirmation. Clears the state file on success.
+Deletes every resource tracked in the state file. Prompts for confirmation. Clears the state file on success. Channels are always deleted before their parent categories.
 
 ```sh
 disform destroy
@@ -261,6 +274,38 @@ Reads the current Discord server state and generates both a `disform.yml` config
 ```sh
 disform import --server-id 123456789012345678
 disform import --server-id 123456789012345678 --output my-server.yml
+```
+
+### `disform validate`
+
+Checks the config file for errors without connecting to Discord.
+
+```sh
+disform validate
+disform validate --config staging.yml
+```
+
+### `disform drift`
+
+Compares the state file against live Discord and reports resources that were renamed or deleted outside of disform.
+
+```sh
+disform drift
+```
+
+### `disform fmt`
+
+Normalizes `disform.yml` in place — sorts keys alphabetically, uppercases hex colors.
+
+```sh
+disform fmt
+disform fmt --check   # exit 1 if file would change (useful in CI)
+```
+
+### `disform version`
+
+```sh
+disform version
 ```
 
 ---

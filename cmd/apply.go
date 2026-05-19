@@ -15,6 +15,7 @@ import (
 )
 
 var applyAutoApprove bool
+var applyTargets []string
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
@@ -25,6 +26,7 @@ var applyCmd = &cobra.Command{
 
 func init() {
 	applyCmd.Flags().BoolVar(&applyAutoApprove, "auto-approve", false, "Skip confirmation prompt")
+	applyCmd.Flags().StringArrayVar(&applyTargets, "target", nil, "Apply only specific resources, e.g. --target role.admin --target channel.General/welcome")
 }
 
 func runApply(cmd *cobra.Command, args []string) error {
@@ -43,6 +45,12 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading state: %w", err)
 	}
 
+	lock, err := state.AcquireLock(stateFile)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
 	client := discord.NewHTTPClient(tok)
 
 	live, err := fetchLiveState(client, cfg.ServerID)
@@ -54,6 +62,13 @@ func runApply(cmd *cobra.Command, args []string) error {
 	plan, err := p.Plan()
 	if err != nil {
 		return fmt.Errorf("computing plan: %w", err)
+	}
+
+	if len(applyTargets) > 0 {
+		plan, err = filterPlan(plan, applyTargets)
+		if err != nil {
+			return err
+		}
 	}
 
 	printPlan(plan)
@@ -84,7 +99,6 @@ func runApply(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Applying: %s %s %q... ", action.Type, action.ResourceType, action.Name)
 		if err := a.ApplyAction(action); err != nil {
 			fmt.Println("error!")
-			// Save state even on error (partial progress).
 			if saveErr := state.SaveState(st, stateFile); saveErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save state: %v\n", saveErr)
 			}
@@ -99,4 +113,54 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("\nApply complete!")
 	return nil
+}
+
+// filterPlan returns a new plan containing only actions matching the given targets.
+// Target format: "resourceType.name" e.g. "role.admin", "channel.General/welcome".
+func filterPlan(plan *planner.Plan, targets []string) (*planner.Plan, error) {
+	type targetKey struct {
+		resourceType planner.ResourceType
+		name         string
+	}
+
+	keys := make([]targetKey, 0, len(targets))
+	for _, t := range targets {
+		dot := strings.Index(t, ".")
+		if dot < 0 {
+			return nil, fmt.Errorf("invalid --target %q: expected format type.name (e.g. role.admin, channel.General/welcome)", t)
+		}
+		typePart := t[:dot]
+		namePart := t[dot+1:]
+		var rt planner.ResourceType
+		switch typePart {
+		case "role":
+			rt = planner.ResourceRole
+		case "category":
+			rt = planner.ResourceCategory
+		case "channel":
+			rt = planner.ResourceChannel
+		default:
+			return nil, fmt.Errorf("invalid --target %q: resource type must be role, category, or channel", t)
+		}
+		keys = append(keys, targetKey{rt, namePart})
+	}
+
+	filtered := &planner.Plan{}
+	for _, action := range plan.Actions {
+		for _, k := range keys {
+			if action.ResourceType == k.resourceType && action.Name == k.name {
+				filtered.Actions = append(filtered.Actions, action)
+				switch action.Type {
+				case planner.ActionCreate:
+					filtered.ToCreate++
+				case planner.ActionUpdate:
+					filtered.ToUpdate++
+				case planner.ActionDelete:
+					filtered.ToDelete++
+				}
+				break
+			}
+		}
+	}
+	return filtered, nil
 }

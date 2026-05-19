@@ -170,6 +170,19 @@ func Validate(c *Config) error {
 	return nil
 }
 
+// NormalizeConfig normalizes config values to canonical form.
+// Colors are converted to uppercase hex. Used by `disform fmt`.
+func NormalizeConfig(c *Config) {
+	for name, role := range c.Roles {
+		if role.Color != "" {
+			if val, err := ColorToInt(role.Color); err == nil {
+				role.Color = fmt.Sprintf("#%06X", val)
+				c.Roles[name] = role
+			}
+		}
+	}
+}
+
 // ColorToInt converts a "#RRGGBB" hex string to an integer.
 // The input must start with '#' followed by exactly 6 hex digits.
 func ColorToInt(hex string) (int, error) {

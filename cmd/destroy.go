@@ -35,6 +35,12 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading state: %w", err)
 	}
 
+	lock, err := state.AcquireLock(stateFile)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
 	if len(st.Channels)+len(st.Categories)+len(st.Roles) == 0 {
 		fmt.Println("No managed resources to destroy.")
 		return nil

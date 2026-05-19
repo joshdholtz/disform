@@ -1,3 +1,4 @@
 disform
 disform.state.json
+*.state.json.lock
 *.out
